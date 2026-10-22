@@ -6,7 +6,7 @@ import static dev.combatdata.core.Lang.t;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 
 public final class RecHud {
     static final int H = 13, PAD = 4, DOT = 7, GAP = 5;
@@ -24,7 +24,7 @@ public final class RecHud {
     private RecHud() {
     }
 
-    public static void extract(GuiGraphicsExtractor g, DeltaTracker delta) {
+    public static void extract(GuiGraphics g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         Settings s = CombatDataClient.settings();
         if (!s.hudVisible || mc.options.hideGui || mc.player == null || mc.screen instanceof HudPositionScreen) return;
@@ -33,7 +33,7 @@ public final class RecHud {
         draw(g, mc.font, box(mc.font, g.guiWidth(), g.guiHeight(), s, l), l, false, s);
     }
 
-    public static int preview(GuiGraphicsExtractor g, Font font, int x, int y, Settings s) {
+    public static int preview(GuiGraphics g, Font font, int x, int y, Settings s) {
         Label l = label(s);
         int raw = rawWidth(font, s, l);
         draw(g, font, new Box(x, y, raw, H, raw, 1f), l, false, s);
@@ -74,7 +74,7 @@ public final class RecHud {
         return new Box(x, y, w, h, raw, sc);
     }
 
-    static void draw(GuiGraphicsExtractor g, Font font, Box b, Label l, boolean highlight, Settings s) {
+    static void draw(GuiGraphics g, Font font, Box b, Label l, boolean highlight, Settings s) {
         g.pose().pushMatrix();
         g.pose().translate((float) b.x(), (float) b.y());
         g.pose().scale(b.scale(), b.scale());
@@ -93,19 +93,19 @@ public final class RecHud {
                 case Settings.HUD_COLOR_GREY -> GREY;
                 default -> l.state();
             };
-            g.text(font, l.text(), tx, 3, color, s.hudShadow);
+            g.drawString(font, l.text(), tx, 3, color, s.hudShadow);
         }
-        if (highlight) g.outline(-1, -1, w + 2, H + 2, 0xFFFAF9F5);
+        if (highlight) g.renderOutline(-1, -1, w + 2, H + 2, 0xFFFAF9F5);
         g.pose().popMatrix();
     }
 
-    static void roundRect(GuiGraphicsExtractor g, int x, int y, int w, int h, int color) {
+    static void roundRect(GuiGraphics g, int x, int y, int w, int h, int color) {
         g.fill(x + 1, y, x + w - 1, y + h, color);
         g.fill(x, y + 1, x + 1, y + h - 1, color);
         g.fill(x + w - 1, y + 1, x + w, y + h - 1, color);
     }
 
-    static void circle(GuiGraphicsExtractor g, int x, int y, int d, int color) {
+    static void circle(GuiGraphics g, int x, int y, int d, int color) {
         double r = d / 2.0;
         for (int row = 0; row < d; row++) {
             double cy = row + 0.5 - r;

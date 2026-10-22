@@ -254,7 +254,7 @@ public final class Recorder {
     }
 
     static void chat(Minecraft mc, String text) {
-        if (mc.player != null) mc.player.sendSystemMessage(Component.literal("[Combat Data] " + text));
+        if (mc.player != null) mc.player.displayClientMessage(Component.literal("[Combat Data] " + text), false);
     }
 
     private static String serverName(Minecraft mc) {

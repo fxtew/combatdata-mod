@@ -1346,7 +1346,7 @@ final class StatsView {
         g.fill(ax + (int) (4 * unit), top + (int) (8 * unit), ax + (int) (8 * unit), top + (int) (20 * unit), limbs);
         g.fill(ax - (int) (4 * unit), top + (int) (20 * unit), ax - 1, top + sh, limbs);
         g.fill(ax, top + (int) (20 * unit), ax + (int) (4 * unit), top + sh, limbs);
-        g.outline(ax - (int) hw, top, (int) (hw * 2), sh, Theme.CTRL_HOVER);
+        g.renderOutline(ax - (int) hw, top, (int) (hw * 2), sh, Theme.CTRL_HOVER);
         double su = 0, sv = 0;
         int head = 0, legs = 0;
         for (AttackEvent a : hits) {

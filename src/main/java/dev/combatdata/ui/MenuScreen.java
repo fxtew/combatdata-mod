@@ -3,7 +3,7 @@ package dev.combatdata.ui;
 import dev.combatdata.CombatDataClient;
 import dev.combatdata.client.Recordings;
 import dev.combatdata.core.Recording;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -43,7 +43,7 @@ public final class MenuScreen extends Screen {
     private EditBox oppSearch;
     private int frameMouseX, frameMouseY;
     private float frameDelta;
-    private GuiGraphicsExtractor currentG;
+    private GuiGraphics currentG;
     private boolean lastDouble;
     private boolean mouseCaptured;
 
@@ -104,7 +104,7 @@ public final class MenuScreen extends Screen {
         searchBox.setY(y);
         searchBox.setWidth(w);
         searchBox.setHeight(h);
-        searchBox.extractRenderState(currentG, frameMouseX, frameMouseY, frameDelta);
+        searchBox.render(currentG, frameMouseX, frameMouseY, frameDelta);
     }
 
     void placeOppSearch(int x, int y, int w, int h) {
@@ -114,7 +114,7 @@ public final class MenuScreen extends Screen {
         oppSearch.setY(y);
         oppSearch.setWidth(w);
         oppSearch.setHeight(h);
-        oppSearch.extractRenderState(currentG, frameMouseX, frameMouseY, frameDelta);
+        oppSearch.render(currentG, frameMouseX, frameMouseY, frameDelta);
     }
 
     void focusOppSearch() {
@@ -161,9 +161,9 @@ public final class MenuScreen extends Screen {
     }
 
     @Override
-    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics g, int mouseX, int mouseY, float delta) {
         Theme.apply(settingsTab.previewSpec());
-        super.extractRenderState(g, mouseX, mouseY, delta);
+        super.render(g, mouseX, mouseY, delta);
         targets.clear();
         frameMouseX = mouseX;
         frameMouseY = mouseY;
@@ -201,7 +201,7 @@ public final class MenuScreen extends Screen {
     }
 
     private void renderModal(Ui ui, int mouseX, int mouseY, float delta) {
-        GuiGraphicsExtractor g = ui.g;
+        GuiGraphics g = ui.g;
         g.nextStratum();
         ui.layer = 1;
         g.fill(0, 0, width, height, Theme.SCRIM);
@@ -219,7 +219,7 @@ public final class MenuScreen extends Screen {
             editBox.setX(mx + 10);
             editBox.setY(y + 2);
             editBox.setWidth(mw - 20);
-            editBox.extractRenderState(g, mouseX, mouseY, delta);
+            editBox.render(g, mouseX, mouseY, delta);
             y += 26;
         }
         if (modal.error != null) {

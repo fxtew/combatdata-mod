@@ -4,7 +4,7 @@ import dev.combatdata.core.AttackEvent;
 import dev.combatdata.core.JumpResetEvaluator;
 import dev.combatdata.core.PositionEvent;
 import dev.combatdata.core.Replay;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 import static dev.combatdata.core.Lang.t;
 
 import java.util.List;
@@ -176,7 +176,7 @@ final class ReplayView {
                 + t(" · колесо: масштаб", " · wheel: zoom"), x + 4, y + 3, Theme.DIM);
     }
 
-    private static int grid(GuiGraphicsExtractor g, View v, int x, int y, int w, int h) {
+    private static int grid(GuiGraphics g, View v, int x, int y, int w, int h) {
         int step = v.scale() >= 6 ? 1 : 5;
         double halfW = w / v.scale() / 2 + step, halfH = h / v.scale() / 2 + step;
         for (long bx = (long) Math.floor((v.wx() - halfW) / step) * step; bx <= v.wx() + halfW; bx += step) {
@@ -195,12 +195,12 @@ final class ReplayView {
         return (int) Math.round(Math.max(lift * v.scale() * 0.7, lift * 8));
     }
 
-    private static void square(GuiGraphicsExtractor g, int px, int py, int d, int color) {
+    private static void square(GuiGraphics g, int px, int py, int d, int color) {
         g.fill(px - d / 2, py - d / 2, px - d / 2 + d, py - d / 2 + d, color);
     }
 
     /** Minecraft yaw 0 faces +Z (down in top view), 90 faces -X. */
-    private static void player(GuiGraphicsExtractor g, View v, double wx, double wz, float yaw, double lift, int body, int color) {
+    private static void player(GuiGraphics g, View v, double wx, double wz, float yaw, double lift, int body, int color) {
         int px = v.x(wx), py = v.y(wz), up = raise(lift, v);
         if (up > 0) square(g, px, py, body, SHADOW);
         py -= up;

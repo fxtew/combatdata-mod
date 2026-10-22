@@ -3,7 +3,7 @@ package dev.combatdata.client;
 import dev.combatdata.CombatDataClient;
 import dev.combatdata.core.Settings;
 import static dev.combatdata.core.Lang.t;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -69,11 +69,11 @@ public final class HudPositionScreen extends Screen {
     }
 
     @Override
-    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
-        super.extractRenderState(g, mouseX, mouseY, delta);
+    public void render(GuiGraphics g, int mouseX, int mouseY, float delta) {
+        super.render(g, mouseX, mouseY, delta);
         String hint = fight ? t("Перетащите итог боя мышью", "Drag the fight summary with the mouse")
                 : t("Перетащите надпись мышью", "Drag the label with the mouse");
-        g.text(font, hint, (width - font.width(hint)) / 2, 12, 0xFFFFFFFF, true);
+        g.drawString(font, hint, (width - font.width(hint)) / 2, 12, 0xFFFFFFFF, true);
         Settings s = style();
         int[] b = box();
         boolean hl = dragging || inside(b, mouseX, mouseY);

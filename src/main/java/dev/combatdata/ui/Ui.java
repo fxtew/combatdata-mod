@@ -1,7 +1,7 @@
 package dev.combatdata.ui;
 
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -18,7 +18,7 @@ public final class Ui {
 
     public static final int CTRL_H = 16;
 
-    public final GuiGraphicsExtractor g;
+    public final GuiGraphics g;
     public final Font font;
     public final int mx, my;
     private final List<Target> targets;
@@ -26,7 +26,7 @@ public final class Ui {
     public int layer;
     private int cx1 = Integer.MIN_VALUE, cy1 = Integer.MIN_VALUE, cx2 = Integer.MAX_VALUE, cy2 = Integer.MAX_VALUE;
 
-    public Ui(GuiGraphicsExtractor g, Font font, int mx, int my, List<Target> targets, int activeLayer) {
+    public Ui(GuiGraphics g, Font font, int mx, int my, List<Target> targets, int activeLayer) {
         this.g = g;
         this.font = font;
         this.mx = mx;
@@ -119,15 +119,15 @@ public final class Ui {
     }
 
     public void text(String s, int x, int y, int color) {
-        g.text(font, s, x, y, color, false);
+        g.drawString(font, s, x, y, color, false);
     }
 
     public void textRight(String s, int right, int y, int color) {
-        g.text(font, s, right - font.width(s), y, color, false);
+        g.drawString(font, s, right - font.width(s), y, color, false);
     }
 
     public void textCenter(String s, int cx, int y, int color) {
-        g.text(font, s, cx - font.width(s) / 2, y, color, false);
+        g.drawString(font, s, cx - font.width(s) / 2, y, color, false);
     }
 
     public static int textY(int y, int h) {

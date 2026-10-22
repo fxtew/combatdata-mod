@@ -7,7 +7,7 @@ import dev.combatdata.core.Settings;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,7 +57,7 @@ public final class FightHud {
         }
     }
 
-    public static void extract(GuiGraphicsExtractor g, DeltaTracker delta) {
+    public static void extract(GuiGraphics g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         Settings s = CombatDataClient.settings();
         FightSummary.Result r = shown;
@@ -72,7 +72,7 @@ public final class FightHud {
         draw(g, mc.font, box(mc.font, g.guiWidth(), g.guiHeight(), s, c), c, s, fade, false);
     }
 
-    public static void preview(GuiGraphicsExtractor g, Font font, int x, int y, Settings s) {
+    public static void preview(GuiGraphics g, Font font, int x, int y, Settings s) {
         Card c = card(font, FightSummary.sample(), s);
         draw(g, font, new Box(x, y, c.w(), c.h(), 1f), c, s, 1f, false);
     }
@@ -89,7 +89,7 @@ public final class FightHud {
         return box(font, screenW, screenH, s, card(font, FightSummary.sample(), s));
     }
 
-    static void drawSample(GuiGraphicsExtractor g, Font font, Box b, Settings s, boolean highlight) {
+    static void drawSample(GuiGraphics g, Font font, Box b, Settings s, boolean highlight) {
         draw(g, font, b, card(font, FightSummary.sample(), s), s, 1f, highlight);
     }
 
@@ -151,7 +151,7 @@ public final class FightHud {
         if (!p.after().isEmpty()) line.add(new Seg(p.after(), TEXT));
     }
 
-    private static void draw(GuiGraphicsExtractor g, Font font, Box b, Card c, Settings s, float fade, boolean highlight) {
+    private static void draw(GuiGraphics g, Font font, Box b, Card c, Settings s, float fade, boolean highlight) {
         g.pose().pushMatrix();
         g.pose().translate((float) b.x(), (float) b.y());
         g.pose().scale(b.scale(), b.scale());
@@ -163,12 +163,12 @@ public final class FightHud {
         for (List<Seg> line : c.lines()) {
             int x = PAD;
             for (Seg sg : line) {
-                g.text(font, sg.text(), x, y, fadeColor(sg.color(), fade), shadow);
+                g.drawString(font, sg.text(), x, y, fadeColor(sg.color(), fade), shadow);
                 x += font.width(sg.text());
             }
             y += LINE;
         }
-        if (highlight) g.outline(-1, -1, c.w() + 2, c.h() + 2, 0xFFFAF9F5);
+        if (highlight) g.renderOutline(-1, -1, c.w() + 2, c.h() + 2, 0xFFFAF9F5);
         g.pose().popMatrix();
     }
 

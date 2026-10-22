@@ -652,7 +652,7 @@ final class SettingsTab implements Tab {
                 int sx = bx + i * bw / steps, ex = bx + (i + 1) * bw / steps;
                 ui.g.fill(sx, y + 3, ex, y + 3 + bh, 0xFF000000 | dev.combatdata.core.Themes.fromHsl(v[0], v[1], v[2]));
             }
-            ui.g.outline(bx - 1, y + 2, bw + 2, bh + 2, Theme.BORDER);
+            ui.g.renderOutline(bx - 1, y + 2, bw + 2, bh + 2, Theme.BORDER);
             double val = ch == 0 ? editHsl[0] / 360 : editHsl[ch];
             int kx = bx + (int) Math.round(val * (bw - 1));
             ui.g.fill(kx - 1, y + 1, kx + 2, y + bh + 5, Theme.TEXT_STRONG);

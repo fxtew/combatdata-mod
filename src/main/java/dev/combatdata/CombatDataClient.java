@@ -6,7 +6,7 @@ import dev.combatdata.client.Safe;
 import dev.combatdata.core.Settings;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.loader.api.FabricLoader;
@@ -56,13 +56,13 @@ public final class CombatDataClient implements ClientModInitializer {
         settings = Settings.load(configFile());
         saveSettings();
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "main"));
-        MENU = KeyMappingHelper.registerKeyMapping(
+        MENU = KeyBindingHelper.registerKeyBinding(
                 new KeyMapping("key.combatdata.open_menu", GLFW.GLFW_KEY_RIGHT_SHIFT, category));
-        SAVE = KeyMappingHelper.registerKeyMapping(
+        SAVE = KeyBindingHelper.registerKeyBinding(
                 new KeyMapping("key.combatdata.save_buffer", GLFW.GLFW_KEY_F9, category));
-        MARKER = KeyMappingHelper.registerKeyMapping(
+        MARKER = KeyBindingHelper.registerKeyBinding(
                 new KeyMapping("key.combatdata.marker", GLFW.GLFW_KEY_UNKNOWN, category));
-        RESET = KeyMappingHelper.registerKeyMapping(
+        RESET = KeyBindingHelper.registerKeyBinding(
                 new KeyMapping("key.combatdata.reset_buffer", GLFW.GLFW_KEY_UNKNOWN, category));
         Commands.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> Safe.run("тик", () -> Recorder.onTick(mc)));

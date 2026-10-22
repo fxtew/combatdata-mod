@@ -40,9 +40,9 @@ public final class Safe {
             try {
                 Minecraft mc = Minecraft.getInstance();
                 mc.execute(() -> {
-                    if (mc.player != null) mc.player.sendSystemMessage(Component.literal("[Combat Data] "
+                    if (mc.player != null) mc.player.displayClientMessage(Component.literal("[Combat Data] "
                             + t("Внутренняя ошибка, подробности в latest.log. Игра продолжает работать, запись может быть неполной.",
-                            "Internal error, see latest.log. The game keeps running, the recording may be incomplete.")));
+                            "Internal error, see latest.log. The game keeps running, the recording may be incomplete.")), false);
                 });
             } catch (Exception | LinkageError ignored) {
             }
