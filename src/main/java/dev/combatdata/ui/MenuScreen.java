@@ -304,17 +304,17 @@ public final class MenuScreen extends Screen {
                     new Modal.Btn(t("Не сохранять", "Discard"), Ui.Kind.DANGER, s -> {
                         settingsTab.cancel();
                         closeModal();
-                        minecraft.setScreen(null);
+                        minecraft.gui.setScreen(null);
                     }),
                     new Modal.Btn(t("Применить", "Apply"), Ui.Kind.PRIMARY, s -> {
                         settingsTab.apply();
                         closeModal();
-                        minecraft.setScreen(null);
+                        minecraft.gui.setScreen(null);
                     }))));
             return;
         }
         CombatDataClient.saveSettings();
-        minecraft.setScreen(null);
+        minecraft.gui.setScreen(null);
     }
 
     @Override

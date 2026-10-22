@@ -128,7 +128,7 @@ public final class HudPositionScreen extends Screen {
     @Override
     public void onClose() {
         CombatDataClient.saveSettings();
-        minecraft.setScreen(parent);
+        minecraft.gui.setScreen(parent);
     }
 
     @Override

@@ -165,7 +165,7 @@ public final class Recorder {
             }
         }
         while (CombatDataClient.MENU.consumeClick()) {
-            if (mc.screen == null) mc.setScreen(new dev.combatdata.ui.MenuScreen());
+            if (mc.gui.screen() == null) mc.gui.setScreen(new dev.combatdata.ui.MenuScreen());
         }
     }
 

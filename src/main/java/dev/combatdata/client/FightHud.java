@@ -61,7 +61,7 @@ public final class FightHud {
         Minecraft mc = Minecraft.getInstance();
         Settings s = CombatDataClient.settings();
         FightSummary.Result r = shown;
-        if (r == null || !s.fightSummary || mc.options.hideGui || mc.player == null || mc.screen instanceof HudPositionScreen) return;
+        if (r == null || !s.fightSummary || mc.gui.hud.isHidden() || mc.player == null || mc.gui.screen() instanceof HudPositionScreen) return;
         long age = System.currentTimeMillis() - shownAtWall, show = s.fsShowSec * 1000L;
         if (age >= show) {
             shown = null;

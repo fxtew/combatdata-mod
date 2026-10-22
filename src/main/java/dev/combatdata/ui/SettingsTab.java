@@ -385,7 +385,7 @@ final class SettingsTab implements Tab {
         row(ui, x, y, w, 30, t("Положение надписи", "Label position"), t("Меняется сразу, без «Применить»", "Changes immediately, no Apply needed"), false);
         int bw = ui.buttonWidth(t("Переместить", "Move"));
         ui.button(right - bw, y + 7, bw, 16, t("Переместить", "Move"), Ui.Kind.SECONDARY, true,
-                () -> Minecraft.getInstance().setScreen(new HudPositionScreen(menu)));
+                () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu)));
         // Position bypasses the draft, so resetting it saves immediately.
         reset(ui, right - bw - 4, y + 8, l.hudX != DEF.hudX || l.hudY != DEF.hudY, t("левый верхний угол", "top left corner"), () -> {
             l.hudX = DEF.hudX;
@@ -490,7 +490,7 @@ final class SettingsTab implements Tab {
             row(ui, x, y, w, 30, t("Своё место", "Custom place"), t("Меняется сразу, без «Применить»", "Changes immediately, no Apply needed"), false);
             int bw = ui.buttonWidth(t("Переместить", "Move"));
             ui.button(right - bw, y + 7, bw, 16, t("Переместить", "Move"), Ui.Kind.SECONDARY, true,
-                    () -> Minecraft.getInstance().setScreen(new HudPositionScreen(menu, true, draft)));
+                    () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu, true, draft)));
             y += 30;
         }
         return y;

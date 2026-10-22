@@ -27,7 +27,7 @@ public final class RecHud {
     public static void extract(GuiGraphicsExtractor g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         Settings s = CombatDataClient.settings();
-        if (!s.hudVisible || mc.options.hideGui || mc.player == null || mc.screen instanceof HudPositionScreen) return;
+        if (!s.hudVisible || mc.gui.hud.isHidden() || mc.player == null || mc.gui.screen() instanceof HudPositionScreen) return;
         Label l = label(s);
         if (s.hudHideWhenPaused && l.paused()) return;
         draw(g, mc.font, box(mc.font, g.guiWidth(), g.guiHeight(), s, l), l, false, s);
