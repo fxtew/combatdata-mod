@@ -1,0 +1,8 @@
+# Line endings: LF in the repo and for shell scripts, CRLF for .bat
+* text=auto
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary
+*.cdrec binary

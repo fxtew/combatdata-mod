@@ -1,0 +1,45 @@
+plugins {
+    // 26.1 ships unobfuscated, so no mappings are needed
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+base { archivesName = project.archives_base_name }
+
+repositories {
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand 'version': project.version }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+    it.options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+// Core regression tests (no JUnit), run as part of ./gradlew build
+tasks.register('coreTests', JavaExec) {
+    group = 'verification'
+    description = 'Combat Data core tests'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.combatdata.core.CoreTests'
+    jvmArgs '-Dstdout.encoding=UTF-8'
+}
+tasks.named('check') { dependsOn 'coreTests' }
+
+// No JUnit tests; without this Gradle 9 fails on the empty test task.
+tasks.named('test') { enabled = false }

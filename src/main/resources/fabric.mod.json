@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "combatdata",
+  "version": "${version}",
+  "name": "Combat Data",
+  "description": "Клиентский мод: буфер записи PvP-боёв на мечах, статистика и графики прямо в игре. Только наблюдает, ничего не отправляет в сеть. Совместим с VulkanMod.",
+  "authors": ["fate"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.combatdata.CombatDataClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": "~26.1",
+    "java": ">=25",
+    "fabric-api": "*"
+  },
+  "mixins": [
+    "combatdata.mixins.json"
+  ]
+}
