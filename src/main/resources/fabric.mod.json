@@ -3,7 +3,7 @@
   "id": "combatdata",
   "version": "${version}",
   "name": "Combat Data",
-  "description": "Клиентский мод: буфер записи PvP-боёв на мечах, статистика и графики прямо в игре. Только наблюдает, ничего не отправляет в сеть. Совместим с VulkanMod.",
+  "description": "Records your sword PvP fights and shows stats and charts right in the game.",
   "authors": ["fate"],
   "license": "MIT",
   "icon": "assets/combatdata/icon.png",
