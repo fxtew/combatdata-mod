@@ -6,6 +6,7 @@
   "description": "Клиентский мод: буфер записи PvP-боёв на мечах, статистика и графики прямо в игре. Только наблюдает, ничего не отправляет в сеть. Совместим с VulkanMod.",
   "authors": ["fate"],
   "license": "MIT",
+  "icon": "assets/combatdata/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": [
