@@ -402,12 +402,10 @@ final class ProgressTab implements Tab {
             error = t("Запись не найдена: ", "Recording not found: ") + s.file();
             return;
         }
-        try {
-            menu.openRecording(e, Cdrec.read(e.file()));
-            error = null;
-        } catch (Exception ex) {
+        error = null;
+        Recordings.readAsync(e.file(), rec -> menu.openRecording(e, rec), ex -> {
             CombatDataClient.LOG.error("[CD] не удалось открыть запись", ex);
             error = t("Не удалось открыть: ", "Could not open: ") + ex.getMessage();
-        }
+        });
     }
 }

@@ -36,9 +36,87 @@ public final class CoreTests {
         replay();
         liteAndThemes();
         fightSummary();
+        autosaveAndFixes();
         // Check names are ASCII: the Windows console (CP866) garbles Cyrillic.
         System.out.println("CoreTests: " + checks + " checks, " + failures + " failed");
         if (failures > 0) System.exit(1);
+    }
+
+    static void autosaveAndFixes() throws Exception {
+        Settings st = new Settings();
+        check("автосохранение включено, подробный лог выключен по умолчанию", st.autoSave && !st.debugLog);
+        st.autoSave = false;
+        check("автосохранение сохраняется в настройках", !st.copy().autoSave);
+
+        List<Event> ev = List.of(new SegmentEvent(0, "srv", "minecraft:overworld", 1_000_000L), new PingEvent(1000, 40),
+                atk(5000, A, Outcome.HIT_CONFIRMED, 2.5, 1f), from(6000, A));
+        Recording r = new Recording(1, "me", B, "26.1.2", 1_000_000L, 9000, ev);
+        check("первое боевое событие", r.firstCombatMs() == 5000
+                && new Recording(1, "me", B, "26.1.2", 0, 1000, List.of(new PingEvent(1, 1))).firstCombatMs() == -1);
+        Recording cut = r.trimmedFrom(4000);
+        check("обрезка: сегмент переносится в 0, время сдвигается", cut.events().size() == 3
+                && cut.events().get(0) instanceof SegmentEvent s && s.t() == 0 && s.server().equals("srv")
+                && cut.events().get(1).t() == 1000 && cut.events().get(2).t() == 2000);
+        check("обрезка: длительность и время начала", cut.durationMs() == 5000 && cut.wallStartMs() == 1_004_000L
+                && r.trimmedFrom(0) == r && r.trimmedFrom(-5) == r);
+
+        RecordingBuffer buf = new RecordingBuffer();
+        buf.add(new SegmentEvent(0, "srv", "minecraft:overworld", 1_000_000L));
+        buf.add(atk(4000, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+        // An hour of wall time passed (pauses), but only 5 s of active time.
+        Recording live = buf.copy(5000, 3000, "me", B, "26.1.2", 1_000_000L + 3_600_000L);
+        check("время начала берётся из сегмента, а не из текущего времени", live.wallStartMs() == 1_002_000L);
+        RecordingBuffer noSeg = new RecordingBuffer();
+        noSeg.add(atk(100, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+        check("без сегмента время начала как раньше", noSeg.copy(1000, 5000, "me", B, "26.1.2", 50_000).wallStartMs() == 49_000);
+
+        Path f = Files.createTempFile("cd", Cdrec.EXT);
+        Cdrec.write(f, r, "0.1.0");
+        List<String> lines = new ArrayList<>();
+        try (var in = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new java.util.zip.GZIPInputStream(Files.newInputStream(f)), java.nio.charset.StandardCharsets.UTF_8))) {
+            for (String l; (l = in.readLine()) != null; ) lines.add(l);
+        }
+        lines.add(2, "{\"k\":\"A\",\"t\":");
+        try (var out = new java.io.OutputStreamWriter(new java.util.zip.GZIPOutputStream(Files.newOutputStream(f)),
+                java.nio.charset.StandardCharsets.UTF_8)) {
+            for (String l : lines) out.write(l + "\n");
+        }
+        check("испорченная строка пропускается", Cdrec.read(f).events().equals(r.events()));
+        List<Event> many = new ArrayList<>();
+        for (int i = 0; i < 3000; i++) many.add(new PingEvent(i * 10L, 40 + i % 7));
+        Cdrec.write(f, new Recording(1, "me", B, "26.1.2", 0, 30_000, many), "0.1.0");
+        byte[] all = Files.readAllBytes(f);
+        Files.write(f, Arrays.copyOf(all, all.length / 2));
+        int got = Cdrec.read(f).events().size();
+        check("обрезанный файл читается до места обрыва", got > 0 && got < many.size());
+        Files.write(f, Arrays.copyOf(all, 12));
+        boolean threw = false;
+        try {
+            Cdrec.read(f);
+        } catch (java.io.IOException ex) {
+            threw = true;
+        }
+        check("файл без единой строки не читается", threw);
+        Files.deleteIfExists(f);
+
+        var F = InputEvent.Input.FORWARD;
+        WTap.Result w = WTap.analyze(List.of(hitW(0, true), in(100, F, false), in(160, F, true),
+                atk(300, A, Outcome.MISS, 3.5, 1f), hitW(600, true)));
+        check("W-tap: отсчёт от прошлого попадания, а не от промаха", w.hits().size() == 1
+                && w.hits().get(0).method() == WTap.Method.W_TAP && w.hits().get(0).sincePrevMs() == 600);
+
+        Stats.JumpStats goodJr = new Stats.JumpStats(10, 8, 1, 1, 0, 0, 0, 80, 100, 40, 40, 20, 40, 0, Double.NaN, Double.NaN);
+        Stats.HitStats goodHits = new Stats.HitStats(25, 0, 3, 1, 89, Double.NaN, Double.NaN, Double.NaN, 0, Double.NaN,
+                Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.95, 0, Map.of(), 0, Double.NaN, Double.NaN);
+        var praise = Insights.evaluate(Insights.defaults(), insightIn(goodJr, goodHits), 10);
+        check("похвала: jump reset и точность", hasInsight(praise, "jr-good") && hasInsight(praise, "accuracy-good")
+                && praise.stream().allMatch(i -> i.tone() == Insights.Tone.GOOD));
+        Stats.HitStats lowCharge = new Stats.HitStats(25, 0, 3, 1, 89, Double.NaN, Double.NaN, Double.NaN, 0, Double.NaN,
+                Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.5, 0, Map.of(), 0, Double.NaN, Double.NaN);
+        var mixed = Insights.evaluate(insightIn(goodJr, lowCharge));
+        check("похвала идёт после замечаний", mixed.get(0).id().equals("low-charge")
+                && mixed.get(mixed.size() - 1).tone() == Insights.Tone.GOOD);
     }
 
     static void check(String what, boolean ok) {
@@ -941,7 +1019,9 @@ public final class CoreTests {
         check("выводы: причина проигрышей", ins.stream().anyMatch(i -> i.id().equals("loss-cause") && i.ru().contains("промах")
                 && i.page() == Insights.Page.ATTACK_HITS));
         Trades.Summary good = new Trades.Summary(8, 6, 6, 5, 2, 1, 6, 2, 0, Map.of(Trades.Cause.NONE, 2));
-        check("выводы: хорошие размены без выводов", Insights.evaluate(Insights.defaults(), tradeIn(good), 10).isEmpty());
+        var goodIns = Insights.evaluate(Insights.defaults(), tradeIn(good), 10);
+        check("выводы: хорошие размены только с похвалой", goodIns.size() == 1 && goodIns.get(0).id().equals("first-hit-good")
+                && goodIns.get(0).tone() == Insights.Tone.GOOD);
         Trades.Summary small = new Trades.Summary(3, 0, 0, 0, 3, 0, 0, 3, 0, Map.of(Trades.Cause.MISS, 3));
         check("выводы: мало разменов не судим", Insights.evaluate(Insights.defaults(), tradeIn(small), 10).isEmpty());
 

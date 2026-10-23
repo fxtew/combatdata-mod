@@ -5,6 +5,7 @@ import dev.combatdata.client.Recorder;
 import dev.combatdata.client.Safe;
 import dev.combatdata.core.Settings;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -66,6 +67,7 @@ public final class CombatDataClient implements ClientModInitializer {
                 new KeyMapping("key.combatdata.reset_buffer", GLFW.GLFW_KEY_UNKNOWN, category));
         Commands.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> Safe.run("тик", () -> Recorder.onTick(mc)));
+        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> Safe.run("выход из игры", () -> Recorder.onStopping(mc)));
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, Identifier.fromNamespaceAndPath(MOD_ID, "rec"),
                 (g, delta) -> Safe.run("надпись REC", () -> RecHud.extract(g, delta)));
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, Identifier.fromNamespaceAndPath(MOD_ID, "fight"),

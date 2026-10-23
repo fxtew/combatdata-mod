@@ -3,9 +3,11 @@ package dev.combatdata.client;
 import dev.combatdata.CombatDataClient;
 import dev.combatdata.core.Cdrec;
 import dev.combatdata.core.Favorites;
+import dev.combatdata.core.Recording;
 import dev.combatdata.core.Retention;
 import dev.combatdata.core.Settings;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.Minecraft;
 import static dev.combatdata.core.Lang.t;
 
 import java.io.IOException;
@@ -16,6 +18,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -68,6 +73,32 @@ public final class Recordings {
         } catch (IOException ex) {
             CombatDataClient.LOG.error("[CD] не удалось сохранить избранное", ex);
         }
+    }
+
+    private static final ExecutorService LOADER = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "combatdata-loader");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Lists recordings in the background; the callback runs on the game thread. */
+    public static void listAsync(Consumer<List<Entry>> done) {
+        LOADER.execute(() -> {
+            List<Entry> l = list();
+            Minecraft.getInstance().execute(() -> done.accept(l));
+        });
+    }
+
+    /** Reads a whole recording in the background; callbacks run on the game thread. */
+    public static void readAsync(Path file, Consumer<Recording> done, Consumer<Exception> failed) {
+        LOADER.execute(() -> {
+            try {
+                Recording r = Cdrec.read(file);
+                Minecraft.getInstance().execute(() -> done.accept(r));
+            } catch (Exception ex) {
+                Minecraft.getInstance().execute(() -> failed.accept(ex));
+            }
+        });
     }
 
     public static List<Entry> list() {

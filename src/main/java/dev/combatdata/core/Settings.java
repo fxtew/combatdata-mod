@@ -26,7 +26,8 @@ public final class Settings {
     public int hudBgOpacity = 60;
     public int hudFormat = HUD_FULL, hudTextColor = HUD_COLOR_STATE;
     public boolean hudShowDot = true, hudBlink = true, hudShadow = false, hudHideWhenPaused = false;
-    public boolean debugLog = true;
+    public boolean debugLog = false;
+    public boolean autoSave = true;
     public boolean clearOnServerChange = false;
     public int jrLowerMs = 0, jrUpperMs = 80, jrPreMs = 200, jrPostMs = 200;
     public boolean jrExcludeHeld = false;
@@ -156,6 +157,7 @@ public final class Settings {
         hudY = c.hudY;
         hudScale = c.hudScale;
         debugLog = c.debugLog;
+        autoSave = c.autoSave;
         clearOnServerChange = c.clearOnServerChange;
         jrLowerMs = c.jrLowerMs;
         jrUpperMs = c.jrUpperMs;
@@ -235,6 +237,7 @@ public final class Settings {
         m.put("hudY", hudY);
         m.put("hudScale", hudScale);
         m.put("debugLog", debugLog);
+        m.put("autoSave", autoSave);
         m.put("clearOnServerChange", clearOnServerChange);
         m.put("jrLowerMs", jrLowerMs);
         m.put("jrUpperMs", jrUpperMs);
@@ -301,6 +304,7 @@ public final class Settings {
         if (m.get("hudY") instanceof Number n) s.hudY = n.doubleValue();
         if (m.get("hudScale") instanceof Number n) s.hudScale = n.doubleValue();
         if (m.get("debugLog") instanceof Boolean b) s.debugLog = b;
+        if (m.get("autoSave") instanceof Boolean b) s.autoSave = b;
         if (m.get("clearOnServerChange") instanceof Boolean b) s.clearOnServerChange = b;
         if (m.get("jrLowerMs") instanceof Number n) s.jrLowerMs = n.intValue();
         if (m.get("jrUpperMs") instanceof Number n) s.jrUpperMs = n.intValue();

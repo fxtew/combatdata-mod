@@ -107,6 +107,7 @@ final class StatsView {
     private final ReplayView replayView = new ReplayView();
     private Cooldown.Summary cdSum = Cooldown.summary(List.of());
     private double rangeLine = AttackEvent.DEFAULT_RANGE;
+    private long computeMs;
 
     StatsView(MenuScreen menu) {
         this.menu = menu;
@@ -127,6 +128,11 @@ final class StatsView {
             takenChart = new Chart();
             distChart = new Chart();
         }
+    }
+
+    /** How long the last full recompute took; the live view uses it to refresh less often on a big buffer. */
+    long computeMs() {
+        return computeMs;
     }
 
     void setNote(String n) {
@@ -154,6 +160,7 @@ final class StatsView {
                 + showFiltered + "/" + s.tradeParams() + "/" + showProjectiles;
         if (k.equals(key)) return;
         key = k;
+        long started = System.nanoTime();
         sf = cur;
         all = Stats.compute(rec, s.jumpParams(), Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, s.interpMs, sf, s.tradeParams());
         boolean filtered = opp != null || timeFrom >= 0;
@@ -177,6 +184,7 @@ final class StatsView {
         wtap = WTap.analyze(events);
         calib = Calibration.analyze(attempts, s.jumpParams());
         insights = Insights.evaluate(new Insights.Input(res, s.jumpParams()));
+        computeMs = (System.nanoTime() - started) / 1_000_000L;
     }
 
     private void filter(UUID id, String name) {
