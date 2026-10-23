@@ -86,9 +86,11 @@ final class ViewTab implements Tab {
 
     private void renderLive(Ui ui, int x, int y, int w, int h) {
         long now = System.currentTimeMillis();
-        // Recompute is expensive: once per second only if the buffer changed, else every 5 s so the duration keeps updating.
         long ver = Recorder.bufferVersion();
-        if (now - lastRefresh >= REFRESH_MS && (ver != lastVersion || now - lastRefresh >= IDLE_REFRESH_MS)) {
+        // Recompute runs on the render thread: at most once a second and only if the buffer changed (every 5 s anyway, so
+        // the duration keeps updating), and rarer when one recompute is slow, so it stays under about 5% of the time.
+        long every = Math.max(REFRESH_MS, stats.computeMs() * 20);
+        if (now - lastRefresh >= every && (ver != lastVersion || now - lastRefresh >= Math.max(IDLE_REFRESH_MS, every))) {
             lastRefresh = now;
             lastVersion = ver;
             combat = Recorder.hasCombatEvents();
@@ -115,7 +117,6 @@ final class ViewTab implements Tab {
         int bw = ui.buttonWidth(label), bx = x + w - bw;
         ui.button(bx, y + 1, bw, 16, label, Ui.Kind.PRIMARY, Recorder.hasCombatEvents(), () -> {
             Recorder.save(net.minecraft.client.Minecraft.getInstance());
-            menu.recordings.refresh();
             lastRefresh = 0;
         });
         String rl = t("Сбросить", "Reset");

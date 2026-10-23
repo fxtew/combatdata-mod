@@ -47,11 +47,23 @@ public final class Cdrec {
             if (first == null) throw new IOException("Пустой файл записи");
             Map<String, Object> h = obj(Json.parse(first));
             List<Event> ev = new ArrayList<>();
-            String line;
-            while ((line = in.readLine()) != null) {
+            // A damaged line is skipped and a truncated archive keeps the events read so far,
+            // so one bad spot does not make the whole recording unreadable.
+            while (true) {
+                String line;
+                try {
+                    line = in.readLine();
+                } catch (IOException ex) {
+                    if (ev.isEmpty()) throw ex;
+                    break;
+                }
+                if (line == null) break;
                 if (line.isBlank()) continue;
-                Event e = decode(obj(Json.parse(line)));
-                if (e != null) ev.add(e);
+                try {
+                    Event e = decode(obj(Json.parse(line)));
+                    if (e != null) ev.add(e);
+                } catch (RuntimeException ignored) {
+                }
             }
             return new Recording(i(h, "schema"), s(h, "player"), uuid(h, "uuid"), s(h, "mc"), l(h, "wallStart"),
                     l(h, "duration"), ev, Features.parse(h.get("notRecorded")));

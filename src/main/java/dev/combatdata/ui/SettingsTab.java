@@ -180,6 +180,10 @@ final class SettingsTab implements Tab {
         reset(ui, right - 26, y + 6, draft.clearOnServerChange != DEF.clearOnServerChange, onOff(DEF.clearOnServerChange),
                 () -> draft.clearOnServerChange = DEF.clearOnServerChange);
         y += 26;
+        y = flag(ui, x, y, w, t("Автосохранение боёв", "Autosave fights"),
+                t("Через " + draft.fsDelaySec + " с после боя, от " + draft.statMinFightHits + " ударов",
+                        draft.fsDelaySec + " s after a fight, from " + draft.statMinFightHits + " hits"),
+                draft.autoSave, l.autoSave, DEF.autoSave, v -> draft.autoSave = v);
         y = flag(ui, x, y, w, t("Звук при сохранении", "Sound on save"), t("Высокий звук: сохранено, низкий: не удалось", "High: saved, low: failed"), draft.soundOnSave,
                 l.soundOnSave, DEF.soundOnSave, v -> draft.soundOnSave = v);
         row(ui, x, y, w, 26, t("Громкость звука", "Sound volume"), null, draft.soundVolume != l.soundVolume);
@@ -464,7 +468,7 @@ final class SettingsTab implements Tab {
         });
         reset(ui, right - sw - 4, y + 6, draft.fsScale != DEF.fsScale, String.format(Locale.ROOT, "%.2fx", DEF.fsScale), () -> draft.fsScale = DEF.fsScale);
         y += 26;
-        row(ui, x, y, w, 30, t("Появляется через", "Shows after"), t("Секунд без ударов после боя", "Seconds without hits after a fight"), draft.fsDelaySec != l.fsDelaySec);
+        row(ui, x, y, w, 30, t("Бой окончен через", "Fight ends after"), t("Без ударов; для итога и автосохранения", "No hits; for summary and autosave"), draft.fsDelaySec != l.fsDelaySec);
         ui.stepper(right - sw, y + 7, sw, draft.fsDelaySec + t(" с", " s"), () -> {
             draft.fsDelaySec -= draft.fsDelaySec > 10 ? 5 : 1;
             draft.clamp();
@@ -914,14 +918,20 @@ final class SettingsTab implements Tab {
     private static final int[] AGES_DAYS = {0, 7, 14, 30, 60, 90, 180, 365};
     private List<Recordings.Entry> storageList;
     private long storageReloadAt;
+    private boolean storageLoading;
 
     private int storage(Ui ui, int x, int y, int w) {
         Settings l = live();
         long now = System.currentTimeMillis();
-        if (storageList == null || (storageReloadAt > 0 && now >= storageReloadAt)) {
-            storageList = Recordings.list();
+        if (!storageLoading && (storageList == null || (storageReloadAt > 0 && now >= storageReloadAt))) {
+            storageLoading = true;
             storageReloadAt = 0;
+            Recordings.listAsync(list -> {
+                storageList = list;
+                storageLoading = false;
+            });
         }
+        List<Recordings.Entry> files = storageList == null ? List.of() : storageList;
         int right = x + w - 10, sw = 90;
         row(ui, x, y, w, 30, t("Папка записей", "Recordings folder"), Recordings.dir().toString(), false);
         int bw = ui.buttonWidth(t("Открыть", "Open"));
@@ -936,13 +946,13 @@ final class SettingsTab implements Tab {
         y += 30;
         int favs = 0;
         List<Retention.FileInfo> infos = new ArrayList<>();
-        for (Recordings.Entry e : storageList) {
+        for (Recordings.Entry e : files) {
             boolean fav = Recordings.favorite(e);
             if (fav) favs++;
             infos.add(new Retention.FileInfo(e.stem(), e.size(), e.time(), fav));
         }
         row(ui, x, y, w, 26, t("Занято", "Used"), null, false);
-        ui.textRight(storageList.size() + t(" записей · ", " recordings · ") + Fmt.size(Retention.totalBytes(infos)) + t(" · избранных ", " · favorites ") + favs,
+        ui.textRight(files.size() + t(" записей · ", " recordings · ") + Fmt.size(Retention.totalBytes(infos)) + t(" · избранных ", " · favorites ") + favs,
                 right, Ui.textY(y, 26), Theme.TEXT_STRONG);
         y += 26;
         row(ui, x, y, w, 30, t("Лимит места", "Space limit"), t("Старые записи удаляются, пока папка больше лимита", "Oldest recordings are deleted while the folder is over the limit"), draft.storageLimitMb != l.storageLimitMb);
@@ -1002,7 +1012,7 @@ final class SettingsTab implements Tab {
         y = key(ui, x, y, w, t("Сохранить буфер", "Save buffer"), CombatDataClient.SAVE);
         y = key(ui, x, y, w, t("Поставить метку", "Add marker"), CombatDataClient.MARKER);
         y = key(ui, x, y, w, t("Сбросить буфер (дважды)", "Reset buffer (twice)"), CombatDataClient.RESET);
-        ui.text(Draw.ellipsize(ui.font, t("Сброс также: Shift + клавиша сохранения дважды, /combatdata reset", "Reset also: Shift + save key twice, /combatdata reset"), w - 20), x + 10, y + 8, Theme.DIM);
+        ui.text(Draw.ellipsize(ui.font, t("Сброс также: Shift + клавиша сохранения дважды, /combatdata reset confirm", "Reset also: Shift + save key twice, /combatdata reset confirm"), w - 20), x + 10, y + 8, Theme.DIM);
         y += 12;
         ui.text(t("Изменить: Настройки → Управление → Combat Data", "Change in: Options → Controls → Combat Data"), x + 10, y + 8, Theme.DIM);
         return y + 24;

@@ -179,6 +179,45 @@ public final class Insights {
         }
     }
 
+    public record GoodJumpRule(double thresholdPct, int minAttempts, double weight) implements Rule {
+        public String id() { return "jr-good"; }
+
+        public Insight apply(Input in) {
+            Stats.JumpStats j = in.stats().jump();
+            if (j.attempts() < minAttempts || j.successRatePct() < thresholdPct) return null;
+            long pct = Math.round(j.successRatePct());
+            return new Insight(id(), weight * Math.max(1, j.successRatePct() / thresholdPct), Tone.GOOD,
+                    "Jump reset удаётся в " + pct + "% попыток",
+                    "Jump reset succeeds in " + pct + "% of attempts", Page.DEFENSE_JUMP);
+        }
+    }
+
+    public record GoodAccuracyRule(double thresholdPct, int minAttacks, double weight) implements Rule {
+        public String id() { return "accuracy-good"; }
+
+        public Insight apply(Input in) {
+            Stats.HitStats h = in.stats().hits();
+            if (h.confirmed() + h.unconfirmed() + h.misses() < minAttacks || h.hitRatePct() < thresholdPct) return null;
+            long pct = Math.round(h.hitRatePct());
+            return new Insight(id(), weight * Math.max(1, h.hitRatePct() / thresholdPct), Tone.GOOD,
+                    "Точность " + pct + "%: почти каждый удар попадает",
+                    "Accuracy " + pct + "%: almost every swing lands", Page.ATTACK_HITS);
+        }
+    }
+
+    public record GoodFirstHitRule(double thresholdPct, int minTrades, double weight) implements Rule {
+        public String id() { return "first-hit-good"; }
+
+        public Insight apply(Input in) {
+            Trades.Summary t = in.stats().trades();
+            if (t.total() < minTrades || !(t.firstPct() >= thresholdPct)) return null;
+            long pct = Math.round(t.firstPct());
+            return new Insight(id(), weight * Math.max(1, t.firstPct() / thresholdPct), Tone.GOOD,
+                    "Вы бьёте первым в " + pct + "% разменов",
+                    "You hit first in " + pct + "% of trades", Page.FIGHTS_TRADES);
+        }
+    }
+
     /** Thresholds are conservative to avoid noise on short recordings. */
     public static List<Rule> defaults() {
         return List.of(
@@ -189,7 +228,10 @@ public final class Insights {
                 new FirstHitRule(40, 6, 0.9),
                 new SecondLossRule(30, 4, 0.9),
                 new LossCauseRule(50, 4, 0.85),
-                new CaughtRule(25, 10, 0.9));
+                new CaughtRule(25, 10, 0.9),
+                new GoodJumpRule(70, 10, 0.5),
+                new GoodAccuracyRule(80, 20, 0.5),
+                new GoodFirstHitRule(60, 6, 0.5));
     }
 
     public static List<Insight> evaluate(List<Rule> rules, Input in, int limit) {
@@ -198,7 +240,9 @@ public final class Insights {
             Insight i = r.apply(in);
             if (i != null) out.add(i);
         }
-        out.sort(Comparator.comparingDouble(Insight::importance).reversed().thenComparing(Insight::id));
+        // Praise goes after every problem, so it never pushes a problem out of the shown three.
+        out.sort(Comparator.comparing((Insight i) -> i.tone() == Tone.GOOD).thenComparing(Comparator.comparingDouble(Insight::importance).reversed())
+                .thenComparing(Insight::id));
         return out.size() > limit ? List.copyOf(out.subList(0, limit)) : out;
     }
 

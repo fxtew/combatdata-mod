@@ -58,8 +58,9 @@ public final class WTap {
                     if (h.releaseMs() >= 0) release.add((double) h.releaseMs());
                     if (h.resetMs() >= 0) reset.add((double) h.resetMs());
                 }
+                // Sprint is lost on a hit, not on a miss, so the reset is looked for since the previous hit.
+                prev = a;
             }
-            prev = a;
         }
         double[] rs = reset.stream().mapToDouble(Double::doubleValue).toArray();
         return new Result(hasInput, hits, sprintHits, afterReset, methods, mean(release), mean(reset), rs, combos, broken, noSprint);

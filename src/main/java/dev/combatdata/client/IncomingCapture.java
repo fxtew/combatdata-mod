@@ -158,6 +158,10 @@ public final class IncomingCapture {
         if (Recorder.now() - last.t <= 300) last.crit = 1;
     }
 
+    public static boolean hasPending() {
+        return !PENDING.isEmpty();
+    }
+
     public static void clearPending() {
         PENDING.clear();
     }
