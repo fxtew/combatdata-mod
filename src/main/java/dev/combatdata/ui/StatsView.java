@@ -216,6 +216,24 @@ final class StatsView {
         };
     }
 
+    /** Search results that point at a stats page: their names in the current language. */
+    static String[] pages(int sub) {
+        return sub == OVERVIEW ? new String[0] : modes(sub, false);
+    }
+
+    void open(int sub, int mode) {
+        this.sub = sub;
+        switch (sub) {
+            case ATTACK -> attackMode = mode;
+            case DEFENSE -> defenseMode = mode;
+            case FIGHTS -> fightsMode = mode;
+            default -> {
+            }
+        }
+        hitList = jrList = takenList = false;
+        scroll = 0;
+    }
+
     private void go(Insights.Page page) {
         switch (page) {
             case ATTACK_HITS -> { sub = ATTACK; attackMode = A_HITS; hitList = false; }

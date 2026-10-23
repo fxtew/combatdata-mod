@@ -6,12 +6,15 @@ import dev.combatdata.core.Recording;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import static dev.combatdata.core.Lang.t;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import org.lwjgl.glfw.GLFW;
 
 public final class MenuScreen extends Screen {
     enum TabId {
@@ -27,6 +30,10 @@ public final class MenuScreen extends Screen {
         String label() {
             return t(ru, en);
         }
+    }
+
+    static String tabLabel(TabId t) {
+        return t.label();
     }
 
     private static TabId lastTab = TabId.RECORDINGS;
@@ -47,6 +54,12 @@ public final class MenuScreen extends Screen {
     private GuiGraphics currentG;
     private boolean lastDouble;
     private boolean mouseCaptured;
+    private final Find find = new Find();
+    private EditBox findBox;
+    private boolean findOpen;
+    private int findSel;
+    private List<Find.Result> findResults = List.of();
+    private int findX, findY, findW, findH;
 
     public MenuScreen() {
         super(Component.literal("Combat Data"));
@@ -68,6 +81,17 @@ public final class MenuScreen extends Screen {
         oppSearch.setResponder(progress::setOppQuery);
         oppSearch.visible = false;
         addWidget(oppSearch);
+        findBox = new EditBox(font, 0, 0, 140, 14, findBox, Component.literal(t("Поиск по меню", "Search the menu")));
+        findBox.setMaxLength(48);
+        findBox.setHint(Component.literal(t("Поиск по меню (Ctrl+F)", "Search (Ctrl+F)")).withStyle(EditBox.SEARCH_HINT_STYLE));
+        findBox.setResponder(q -> {
+            // A new search rebuilds the index: rows can appear, e.g. a custom place or a new theme.
+            if (!findOpen) find.invalidate();
+            findOpen = !q.isBlank();
+            findSel = 0;
+        });
+        findBox.visible = false;
+        addWidget(findBox);
         current().onShow();
         if (editBox != null) addWidget(editBox);
     }
@@ -173,7 +197,9 @@ public final class MenuScreen extends Screen {
         currentG = g;
         searchBox.visible = false;
         oppSearch.visible = false;
+        if (findOpen && find.needsIndex()) buildIndex(g);
         Ui ui = new Ui(g, font, mouseX, mouseY, targets, modal != null ? 1 : 0);
+        ui.find = find;
         // The window must fit the screen: at GUI scale 4 on 720p the screen is only 320x180.
         int ww = Math.min(width - 4, Math.max(300, Math.min(width - 16, 560)));
         int wh = Math.min(height - 4, Math.max(200, Math.min(height - 16, 340)));
@@ -191,6 +217,9 @@ public final class MenuScreen extends Screen {
         int tabsW = 0;
         for (TabId t : TabId.values()) tabsW += font.width(t.label()) + 18;
         int tabPad = tabsW <= ww - 40 ? 16 : 8;
+        int tabsEnd = wx + 8;
+        for (TabId t : TabId.values()) tabsEnd += font.width(t.label()) + tabPad + 2;
+        placeFind(compact ? tabsEnd : wx + 10 + font.width("Combat Data"), cbx, cby, mouseX, mouseY, delta);
         for (TabId t : TabId.values()) {
             int tw = font.width(t.label()) + tabPad;
             boolean sel = t == tab, hov = ui.hover(tx, ty, tw, 16);
@@ -201,9 +230,178 @@ public final class MenuScreen extends Screen {
             tx += tw + 2;
         }
         g.fill(wx + 8, line, wx + ww - 8, line + 1, Theme.BORDER);
+        find.at(tab, 0);
+        find.beginFrame();
         dev.combatdata.client.Safe.run("вкладка меню", () -> current().render(ui, wx + 10, top, ww - 20, wy + wh - 10 - top));
+        if (modal == null && findOpen && findBox.visible) renderFind(ui);
+        else findH = 0;
         if (modal != null) renderModal(ui, mouseX, mouseY, delta);
         else ui.drawTip(width, height);
+    }
+
+    /** The search field sits in the header, left of the close button; hidden if the header has no room. */
+    private void placeFind(int leftLimit, int closeX, int y, int mouseX, int mouseY, float delta) {
+        int right = closeX - 6, fw = Math.min(150, right - leftLimit - 10);
+        findBox.visible = fw >= 70;
+        if (!findBox.visible) {
+            findOpen = false;
+            return;
+        }
+        findBox.active = modal == null;
+        findBox.setX(right - fw);
+        findBox.setY(y);
+        findBox.setWidth(fw);
+        findBox.setHeight(14);
+        findBox.render(currentG, mouseX, mouseY, delta);
+    }
+
+    private static final int FIND_ROW = 22, FIND_LIMIT = 8;
+
+    private void renderFind(Ui ui) {
+        GuiGraphics g = ui.g;
+        String q = findBox.getValue();
+        findResults = find.search(q, FIND_LIMIT);
+        int total = find.count(q), n = findResults.size();
+        findSel = Math.max(0, Math.min(findSel, n - 1));
+        int w = Math.min(width - 8, Math.max(findBox.getWidth(), 250));
+        int x = Math.max(4, findBox.getX() + findBox.getWidth() - w), y = findBox.getY() + findBox.getHeight() + 3;
+        int more = total > n ? 12 : 0;
+        int h = (n == 0 ? 18 : n * FIND_ROW) + 6 + more;
+        findX = x;
+        findY = y;
+        findW = w;
+        findH = h;
+        g.nextStratum();
+        Draw.roundBordered(g, x, y, w, h, Theme.R_PANEL, Theme.ACCENT, Theme.WINDOW);
+        if (n == 0) {
+            ui.text(t("Ничего не найдено", "Nothing found"), x + 8, y + 8, Theme.MUTED);
+            return;
+        }
+        for (int i = 0; i < n; i++) {
+            Find.Entry e = findResults.get(i).entry();
+            int ry = y + 3 + i * FIND_ROW;
+            boolean hov = ui.hover(x + 3, ry, w - 6, FIND_ROW);
+            if (hov) findSel = i;
+            if (i == findSel) Draw.round(g, x + 3, ry, w - 6, FIND_ROW, Theme.R_CTRL, Theme.RAISED);
+            findLabel(ui, q, e.label(), x + 9, ry + 3, w - 18);
+            ui.text(Draw.ellipsize(font, findPath(e), w - 18), x + 9, ry + 12, Theme.MUTED);
+            ui.click(x + 3, ry, w - 6, FIND_ROW, () -> go(e));
+        }
+        if (more > 0) ui.text(Draw.ellipsize(font, t("Ещё ", "") + (total - n) + t(": уточните запрос", " more: refine the search"), w - 18),
+                x + 9, y + h - 12, Theme.DIM);
+    }
+
+    /** The label with the matched part in the accent color. */
+    private void findLabel(Ui ui, String q, String label, int x, int y, int maxW) {
+        int[] sp = dev.combatdata.core.SearchText.span(q, label);
+        if (sp == null || font.width(label) > maxW) {
+            ui.text(Draw.ellipsize(font, label, maxW), x, y, Theme.TEXT_STRONG);
+            return;
+        }
+        String a = label.substring(0, sp[0]), b = label.substring(sp[0], sp[1]), c = label.substring(sp[1]);
+        ui.text(a, x, y, Theme.TEXT_STRONG);
+        ui.text(b, x + font.width(a), y, Theme.ACCENT);
+        ui.text(c, x + font.width(a + b), y, Theme.TEXT_STRONG);
+    }
+
+    private static String findPath(Find.Entry e) {
+        String p = e.tab().label();
+        if (e.tab() == TabId.SETTINGS) p += " → " + SettingsTab.sectionName(e.section());
+        if (e.group() != null && !e.group().equals(e.label())) p += " → " + e.group();
+        return p;
+    }
+
+    private void go(Find.Entry e) {
+        findOpen = false;
+        setFocused(null);
+        switch (e.tab()) {
+            case SETTINGS -> {
+                settingsTab.reveal(e.section());
+                switchTab(TabId.SETTINGS);
+                find.show(e);
+            }
+            case VIEW -> {
+                view.openPage(e.section() / 10, e.section() % 10);
+                switchTab(TabId.VIEW);
+            }
+            default -> {
+                switchTab(e.tab());
+                find.show(e);
+            }
+        }
+    }
+
+    /**
+     * Lays out every searchable part once, off screen, in both languages. The language switch lasts only for this
+     * call on the render thread.
+     */
+    private void buildIndex(GuiGraphics g) {
+        boolean en = dev.combatdata.core.Lang.english();
+        try {
+            List<Find.Entry> cur = collect(g, en), other = collect(g, !en);
+            dev.combatdata.core.Lang.setEnglish(en);
+            find.setIndex(cur, other);
+        } finally {
+            dev.combatdata.core.Lang.setEnglish(en);
+        }
+    }
+
+    private List<Find.Entry> collect(GuiGraphics g, boolean english) {
+        dev.combatdata.core.Lang.setEnglish(english);
+        find.startCollect();
+        Ui ui = new Ui(g, font, Integer.MIN_VALUE / 2, Integer.MIN_VALUE / 2, new ArrayList<>(), 0);
+        ui.find = find;
+        g.pose().pushMatrix();
+        g.pose().translate(-20000f, -20000f);
+        g.enableScissor(0, 0, 1, 1);
+        try {
+            settingsTab.index(ui, 520);
+            indicators.index(ui, 520);
+        } finally {
+            g.disableScissor();
+            g.pose().popMatrix();
+        }
+        String[] subs = StatsView.subs();
+        find.add(TabId.VIEW, 0, null, subs[StatsView.OVERVIEW]);
+        for (int sub = StatsView.ATTACK; sub <= StatsView.FIGHTS; sub++) {
+            String[] pages = StatsView.pages(sub);
+            for (int m = 0; m < pages.length; m++) find.add(TabId.VIEW, sub * 10 + m, subs[sub], pages[m]);
+        }
+        return find.stopCollect();
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        int k = event.key();
+        if (modal == null && findBox.visible && k == GLFW.GLFW_KEY_F && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) {
+            setFocused(findBox);
+            findOpen = !findBox.getValue().isBlank();
+            return true;
+        }
+        if (modal == null && getFocused() == findBox) {
+            int n = findResults.size();
+            if (findOpen && k == GLFW.GLFW_KEY_DOWN) {
+                findSel = Math.min(findSel + 1, Math.max(0, n - 1));
+                return true;
+            }
+            if (findOpen && k == GLFW.GLFW_KEY_UP) {
+                findSel = Math.max(0, findSel - 1);
+                return true;
+            }
+            if (findOpen && (k == GLFW.GLFW_KEY_ENTER || k == GLFW.GLFW_KEY_KP_ENTER)) {
+                if (n > 0) go(findResults.get(Math.min(findSel, n - 1)).entry());
+                return true;
+            }
+            if (k == GLFW.GLFW_KEY_ESCAPE) {
+                // First Esc closes the results, the second clears the field, the third closes the menu.
+                if (findOpen) findOpen = false;
+                else if (!findBox.getValue().isEmpty()) findBox.setValue("");
+                else setFocused(null);
+                findOpen = false;
+                return true;
+            }
+        }
+        return super.keyPressed(event);
     }
 
     private void renderModal(Ui ui, int mouseX, int mouseY, float delta) {
@@ -247,10 +445,21 @@ public final class MenuScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (editBox != null && editBox.isMouseOver(event.x(), event.y())) return super.mouseClicked(event, doubleClick);
+        if (modal == null && findBox.visible && findBox.isMouseOver(event.x(), event.y())) {
+            findOpen = !findBox.getValue().isBlank();
+            return super.mouseClicked(event, doubleClick);
+        }
+        boolean inFind = findH > 0 && event.x() >= findX && event.x() < findX + findW && event.y() >= findY && event.y() < findY + findH;
+        if (modal == null && findOpen && !inFind) {
+            // The first click outside only closes the results, it does not press what is under them.
+            findOpen = false;
+            setFocused(null);
+            return true;
+        }
         if (modal == null && searchBox.isMouseOver(event.x(), event.y())) return super.mouseClicked(event, doubleClick);
         if (modal == null && oppSearch.isMouseOver(event.x(), event.y())) return super.mouseClicked(event, doubleClick);
         // Clicking outside the search box drops focus so typing doesn't go to a hidden field.
-        if (modal == null && (getFocused() == searchBox || getFocused() == oppSearch)) setFocused(null);
+        if (modal == null && (getFocused() == searchBox || getFocused() == oppSearch || getFocused() == findBox)) setFocused(null);
         if (event.button() != 0) return super.mouseClicked(event, doubleClick);
         lastDouble = doubleClick;
         int active = modal != null ? 1 : 0;

@@ -24,6 +24,8 @@ public final class Ui {
     private final List<Target> targets;
     private final int activeLayer;
     public int layer;
+    /** Menu search; null outside the menu. */
+    Find find;
     private int cx1 = Integer.MIN_VALUE, cy1 = Integer.MIN_VALUE, cx2 = Integer.MAX_VALUE, cy2 = Integer.MAX_VALUE;
 
     public Ui(GuiGraphics g, Font font, int mx, int my, List<Target> targets, int activeLayer) {
@@ -33,6 +35,11 @@ public final class Ui {
         this.my = my;
         this.targets = targets;
         this.activeLayer = activeLayer;
+    }
+
+    /** Reports a row to the menu search: indexes it, or highlights it when a result points here. */
+    public void mark(String label, String hint, int x, int y, int w, int h) {
+        if (find != null) find.mark(this, label, hint, x, y, w, h);
     }
 
     public void clip(int x, int y, int w, int h) {

@@ -13,7 +13,7 @@ statistics and charts in game. It only observes: nothing is sent over the networ
 - Optional HUD indicators, each movable and resizable: exact health, reach of the last hit, combo, ping,
   attack charge, jump reset timing and 3 block hits (with note block sounds), session totals. They show only
   your own data about what already happened.
-- Fight summary card on the HUD, themes, Russian and English interface.
+- Fight summary card on the HUD, themes, Russian and English interface, search across the menu (Ctrl+F).
 - Works with VulkanMod: everything is drawn with standard GUI fills and text.
 
 ## Controls
