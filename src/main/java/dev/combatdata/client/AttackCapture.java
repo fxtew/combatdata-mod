@@ -59,7 +59,10 @@ public final class AttackCapture {
         if (hr.getType() == HitResult.Type.BLOCK && hr instanceof BlockHitResult bhr
                 && !mc.level.getBlockState(bhr.getBlockPos()).isAir()) return;
         Player target = intendedTarget(mc, p);
-        if (target != null) Recorder.add(build(p, target, Outcome.MISS, null));
+        if (target == null) return;
+        AttackEvent miss = build(p, target, Outcome.MISS, null);
+        Recorder.add(miss);
+        Indicators.onMiss(miss);
     }
 
     /** HEAD of LivingEntity.handleDamageEvent for other entities: confirms our hit. */
@@ -72,7 +75,9 @@ public final class AttackCapture {
             Pending pd = it.next();
             if (pd.entityId() == victim.getId()) {
                 it.remove();
-                Recorder.add(pd.base().withOutcome(Outcome.HIT_CONFIRMED));
+                AttackEvent hit = pd.base().withOutcome(Outcome.HIT_CONFIRMED);
+                Recorder.add(hit);
+                Indicators.onHit(hit);
                 return;
             }
         }
@@ -85,6 +90,7 @@ public final class AttackCapture {
             if (n > pd.deadlineMs()) {
                 it.remove();
                 Recorder.add(pd.base());
+                Indicators.onMiss(pd.base());
             }
         }
     }

@@ -37,9 +37,110 @@ public final class CoreTests {
         liteAndThemes();
         fightSummary();
         autosaveAndFixes();
+        indicators();
         // Check names are ASCII: the Windows console (CP866) garbles Cyrillic.
         System.out.println("CoreTests: " + checks + " checks, " + failures + " failed");
         if (failures > 0) System.exit(1);
+    }
+
+    static void indicators() {
+        // Anchors: the default health place is centered over the hunger bar (center + 10 .. center + 91, top height - 39).
+        int[] hp = HudAnchor.place(HudAnchor.BOTTOM_CENTER, 50, -39, 30, 13, 427, 240);
+        check("индикаторы: ХП над полоской голода", hp[0] + 15 == 213 + 50 && hp[1] + 13 == 240 - 39);
+        boolean round = true;
+        int[][] boxes = {{0, 0}, {5, 7}, {200, 100}, {390, 220}, {120, 230}, {300, 10}};
+        for (int sw : new int[]{427, 480, 641}) {
+            for (int[] b : boxes) {
+                int[] a = HudAnchor.fromBox(b[0], b[1], 37, 13, sw, 240);
+                int[] p = HudAnchor.place(a[0], a[1], a[2], 37, 13, sw, 240);
+                round &= p[0] == Math.min(b[0], sw - 37) && p[1] == Math.min(b[1], 240 - 13);
+            }
+        }
+        check("индикаторы: место точно восстанавливается", round);
+        check("индикаторы: угол по трети экрана", HudAnchor.fromBox(2, 2, 20, 10, 300, 200)[0] == 0
+                && HudAnchor.fromBox(140, 95, 20, 10, 300, 200)[0] == HudAnchor.CENTER
+                && HudAnchor.fromBox(280, 190, 20, 10, 300, 200)[0] == 8);
+        int[] right = HudAnchor.fromBox(260, 20, 30, 13, 300, 200);
+        int[] wider = HudAnchor.place(right[0], right[1], right[2], 30, 13, 600, 200);
+        check("индикаторы: правый край держится при смене ширины", wider[0] == 560 && wider[1] == 20);
+        int[] off = HudAnchor.place(0, 500, -50, 30, 13, 300, 200);
+        check("индикаторы: не уходит за экран", off[0] == 270 && off[1] == 0);
+
+        check("ноты: имена", Notes.name(0).equals("F#3") && Notes.name(6).equals("C4") && Notes.name(12).equals("F#4")
+                && Notes.name(24).equals("F#5") && Notes.name(99).equals("F#5"));
+        check("ноты: высота", Math.abs(Notes.pitch(12) - 1f) < 1e-6 && Math.abs(Notes.pitch(0) - 0.5f) < 1e-6
+                && Math.abs(Notes.pitch(24) - 2f) < 1e-6);
+        check("ноты: инструменты по кругу", Notes.step("pling", -1).equals("hat") && Notes.step("hat", 1).equals("pling")
+                && Notes.step("unknown", 1).equals("bell"));
+
+        check("ХП: точность", IndicatorConfig.formatHealth(17.346, 2).equals("17.35") && IndicatorConfig.formatHealth(17.3, 1).equals("17.3")
+                && IndicatorConfig.formatHealth(0.3, 0).equals("1") && IndicatorConfig.formatHealth(20, 0).equals("20")
+                && IndicatorConfig.formatHealth(5.5, 3).equals("5.500"));
+        IndicatorConfig ic = new IndicatorConfig();
+        check("индикаторы: по умолчанию выключены, ХП до сотых красным", !ic.anyOn() && ic.enabled && ic.hpDecimals == 2
+                && ic.hpColor == IndicatorConfig.HP_RED && !ic.get(IndicatorConfig.Kind.HEALTH).bg);
+        ic.get(IndicatorConfig.Kind.REACH).on = true;
+        ic.get(IndicatorConfig.Kind.REACH).dx = 77;
+        ic.get(IndicatorConfig.Kind.REACH).scale = 1.75;
+        ic.hpDecimals = 3;
+        ic.jrSoundOk = ic.jrSoundOk.withInstrument("bell").withNote(20);
+        IndicatorConfig back = ic.copy();
+        check("индикаторы: сохраняются", back.on(IndicatorConfig.Kind.REACH) && back.get(IndicatorConfig.Kind.REACH).dx == 77
+                && back.get(IndicatorConfig.Kind.REACH).scale == 1.75 && back.hpDecimals == 3
+                && back.jrSoundOk.equals(new IndicatorConfig.Sound(true, "bell", 20)));
+        Map<String, Object> bad = ic.toMap();
+        bad.put("hpDecimals", 9);
+        bad.put("jrSoundOk", Map.of("instrument", "kazoo", "note", 99));
+        bad.put("elements", Map.of("health", Map.of("anchor", 42, "scale", 100)));
+        IndicatorConfig fixed = IndicatorConfig.fromMap(bad);
+        check("индикаторы: неверные значения исправляются", fixed.hpDecimals == 3 && fixed.jrSoundOk.instrument().equals("pling")
+                && fixed.jrSoundOk.note() == 24 && fixed.get(IndicatorConfig.Kind.HEALTH).anchor == HudAnchor.BOTTOM_CENTER
+                && fixed.get(IndicatorConfig.Kind.HEALTH).scale == IndicatorConfig.MAX_SCALE);
+        Settings st = new Settings();
+        Settings draft = st.copy();
+        st.indicators.get(IndicatorConfig.Kind.PING).on = true;
+        check("индикаторы: не входят в черновик настроек", draft.diffCount(st) == 0);
+        st.copyFrom(draft);
+        check("индикаторы: «Применить» их не откатывает", st.indicators.on(IndicatorConfig.Kind.PING)
+                && Settings.fromMap(st.toMap()).indicators.on(IndicatorConfig.Kind.PING));
+
+        UUID x = new UUID(1, 1), y = new UUID(2, 2);
+        LiveCombat l = new LiveCombat();
+        l.hit(1000, x, 2.9, false, Double.NaN);
+        l.hit(1500, x, 3.0, false, Double.NaN);
+        l.miss(1700);
+        l.hit(2000, x, 2.5, true, 3.4);
+        check("живое комбо", l.combo() == 3 && l.bestCombo() == 3 && l.lastReach() == 2.5 && l.lastReachAt() == 2000);
+        check("живой 3 block hit", l.threeBlocks() == 1 && l.lastThreeBlock().opponentDistance() == 3.4);
+        check("сессия: точность", l.hits() == 3 && l.swings() == 4 && Math.abs(l.accuracyPct() - 75) < 1e-9);
+        l.hit(2300, y, 2.0, false, Double.NaN);
+        check("комбо: смена цели", l.combo() == 1 && l.lastCombo() == 3 && l.comboEndedAt() == 2300);
+        l.tick(4400);
+        check("комбо: пауза дольше 2 с", l.combo() == 0 && l.lastCombo() == 1);
+        l.hit(5000, x, 2.0, false, Double.NaN);
+        l.hit(5400, x, 2.0, false, Double.NaN);
+        LiveCombat.JrVerdict v = l.taken(6000, false);
+        check("комбо: обрывается ударом по вам", v == null && l.combo() == 0 && l.lastCombo() == 2 && l.waitingForJump());
+        v = l.jump(6045, false);
+        check("jump reset: вовремя", v != null && v.result() == LiveCombat.Jr.SUCCESS && v.deltaMs() == 45 && v.offMs() == 0);
+        check("jump reset: прыжок не засчитывается дважды", l.jump(6060, false) == null);
+        l.taken(7000, false);
+        v = l.jump(7120, false);
+        check("jump reset: поздно", v != null && v.result() == LiveCombat.Jr.LATE && v.offMs() == 40);
+        l.jump(7990, false);
+        v = l.taken(8000, false);
+        check("jump reset: рано, сразу при ударе", v != null && v.result() == LiveCombat.Jr.EARLY && v.offMs() == 10 && !l.waitingForJump());
+        l.taken(9000, false);
+        l.tick(9300);
+        check("jump reset: без прыжка вердикта нет", !l.waitingForJump() && l.jump(9310, false) == null);
+        l.taken(10_000, false);
+        check("jump reset: fly out не попытка", l.jump(10_030, true) == null);
+        l.setParams(new JumpResetEvaluator.Params(0, 80, 200, 200, true, true));
+        check("jump reset: зажатый прыжок исключается", l.taken(11_000, true) == null && !l.waitingForJump());
+        check("сессия: процент jump reset", l.jrAttempts() == 3 && l.jrSuccess() == 1 && Math.abs(l.jrPct() - 100.0 / 3) < 1e-9);
+        l.resetSession();
+        check("сессия: сброс", l.hits() == 0 && l.swings() == 0 && Double.isNaN(l.accuracyPct()) && Double.isNaN(l.jrPct())
+                && l.lastJr() == null && Double.isNaN(l.lastReach()));
     }
 
     static void autosaveAndFixes() throws Exception {
