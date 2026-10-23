@@ -9,7 +9,7 @@ import java.util.*;
 
 final class StatsView {
     static final int OVERVIEW = 0, ATTACK = 1, DEFENSE = 2, FIGHTS = 3;
-    static final int A_HITS = 0, A_AIM = 1, A_STRIKES = 2, A_INTERVALS = 3, A_COMBO = 4, A_WTAP = 5;
+    static final int A_HITS = 0, A_AIM = 1, A_STRIKES = 2, A_COMBO = 3, A_WTAP = 4;
     static final int D_JUMP = 0, D_KNOCKBACK = 1, D_TAKEN = 2;
     static final int F_OPPONENTS = 0, F_FIGHTS = 1, F_TRADES = 2, F_DISTANCE = 3, F_TIMELINE = 4;
 
@@ -21,10 +21,10 @@ final class StatsView {
     private static String[] modes(int sub, boolean narrow) {
         boolean en = Lang.english();
         return switch (sub) {
-            case ATTACK -> en ? (narrow ? new String[]{"Hits", "Aim", "Types", "Interv.", "Combo", "W-tap"}
-                    : new String[]{"Hits", "Aim", "Strikes", "Intervals", "Combos", "W-tap"})
-                    : narrow ? new String[]{"Попад.", "Прицел", "Удары", "Интерв.", "Комбо", "W-tap"}
-                    : new String[]{"Попадания", "Прицел", "Удары", "Интервалы", "Комбо", "W-tap"};
+            case ATTACK -> en ? (narrow ? new String[]{"Hits", "Aim", "Types", "Combo", "W-tap"}
+                    : new String[]{"Hits", "Aim", "Strikes", "Combos", "W-tap"})
+                    : narrow ? new String[]{"Попад.", "Прицел", "Удары", "Комбо", "W-tap"}
+                    : new String[]{"Попадания", "Прицел", "Удары", "Комбо", "W-tap"};
             case DEFENSE -> en ? new String[]{"Jump reset", "Knockback", narrow ? "On me" : "Hits on me"}
                     : new String[]{"Jump reset", "Отлёт", narrow ? "По мне" : "Удары по мне"};
             default -> en ? new String[]{narrow ? "Opp." : "Opponents", "Fights", "Trades", narrow ? "Dist." : "Distance", narrow ? "Time" : "Timeline"}
@@ -88,15 +88,13 @@ final class StatsView {
     private double scroll;
     private int maxScroll;
     private int px, py, pw, ph;
-    private boolean showFails = true, showNoJump = true, showMisses = true, showUnconfirmed = true, showFlyOut = true,
-            showCdMisses = true;
+    private boolean showFails = true, showNoJump = true, showMisses = true, showUnconfirmed = true, showFlyOut = true;
     private StatFilter.WeaponView weaponOverride;
     private boolean filtersOff, showFiltered;
     private StatFilter sf = StatFilter.NONE;
     private List<Event> rawEvents = List.of();
-    private List<Cooldown.Interval> allIntervals = List.of();
-    private Chart jrChart = new Chart(), hitChart = new Chart(), cdChart = new Chart(), takenChart = new Chart();
-    private List<Chart.Point> jrPoints = List.of(), hitPoints = List.of(), cdPoints = List.of(), takenPoints = List.of();
+    private Chart jrChart = new Chart(), hitChart = new Chart(), takenChart = new Chart();
+    private List<Chart.Point> jrPoints = List.of(), hitPoints = List.of(), takenPoints = List.of();
     private double takenRange = AttackEvent.DEFAULT_RANGE;
     private Chart distChart = new Chart();
     private UUID distOpp;
@@ -107,8 +105,6 @@ final class StatsView {
     private double distMean = Double.NaN;
     private boolean replayOn;
     private final ReplayView replayView = new ReplayView();
-    private List<Cooldown.Interval> intervals = List.of();
-    private double cdTicks = Cooldown.DEFAULT_TICKS;
     private Cooldown.Summary cdSum = Cooldown.summary(List.of());
     private double rangeLine = AttackEvent.DEFAULT_RANGE;
 
@@ -128,7 +124,6 @@ final class StatsView {
             scroll = 0;
             jrChart = new Chart();
             hitChart = new Chart();
-            cdChart = new Chart();
             takenChart = new Chart();
             distChart = new Chart();
         }
@@ -155,7 +150,7 @@ final class StatsView {
         Settings s = CombatDataClient.settings();
         StatFilter cur = effectiveFilter(s);
         String k = s.jumpParams() + "/" + s.interpMs + "/" + opp + "/" + timeFrom + "/" + timeTo + "/" + showFails
-                + showNoJump + showMisses + showUnconfirmed + showFlyOut + showCdMisses + Lang.english() + "/" + cur
+                + showNoJump + showMisses + showUnconfirmed + showFlyOut + Lang.english() + "/" + cur
                 + showFiltered + "/" + s.tradeParams() + "/" + showProjectiles;
         if (k.equals(key)) return;
         key = k;
@@ -176,13 +171,9 @@ final class StatsView {
         takenPoints = buildTakenPoints();
         buildDistance();
         // Intervals use all attacks (a filtered hand hit would otherwise lengthen the interval); only filtered ones go into stats.
-        allIntervals = Cooldown.intervals(rawEvents);
         List<Cooldown.Interval> kept = new ArrayList<>();
-        for (Cooldown.Interval i : allIntervals) if (sf.attack(i.attack()) == null) kept.add(i);
-        intervals = kept;
-        cdTicks = commonCooldown(intervals);
-        cdSum = Cooldown.summary(intervals);
-        cdPoints = buildCdPoints();
+        for (Cooldown.Interval i : Cooldown.intervals(rawEvents)) if (sf.attack(i.attack()) == null) kept.add(i);
+        cdSum = Cooldown.summary(kept);
         wtap = WTap.analyze(events);
         calib = Calibration.analyze(attempts, s.jumpParams());
         insights = Insights.evaluate(new Insights.Input(res, s.jumpParams()));
@@ -199,7 +190,6 @@ final class StatsView {
         if (res == null) return 0;
         if (sub == DEFENSE && defenseMode == D_JUMP && !jrList) return 1;
         if (sub == ATTACK && attackMode == A_HITS && !hitList) return 2;
-        if (sub == ATTACK && attackMode == A_INTERVALS) return 3;
         if (sub == DEFENSE && defenseMode == D_TAKEN && !takenList && res.taken().rated() > 0) return 4;
         if (sub == FIGHTS && fightsMode == F_DISTANCE && !distSeries.isEmpty()) return 5;
         return 0;
@@ -212,7 +202,6 @@ final class StatsView {
     private Chart chart() {
         return switch (graphKind()) {
             case 1 -> jrChart;
-            case 3 -> cdChart;
             case 4 -> takenChart;
             case 5 -> distChart;
             default -> hitChart;
@@ -224,7 +213,6 @@ final class StatsView {
             case ATTACK_HITS -> { sub = ATTACK; attackMode = A_HITS; hitList = false; }
             case ATTACK_AIM -> { sub = ATTACK; attackMode = A_AIM; }
             case ATTACK_STRIKES -> { sub = ATTACK; attackMode = A_STRIKES; }
-            case ATTACK_INTERVALS -> { sub = ATTACK; attackMode = A_INTERVALS; }
             case DEFENSE_JUMP -> { sub = DEFENSE; defenseMode = D_JUMP; jrList = false; }
             case DEFENSE_KNOCKBACK -> { sub = DEFENSE; defenseMode = D_KNOCKBACK; }
             case DEFENSE_TAKEN -> { sub = DEFENSE; defenseMode = D_TAKEN; }
@@ -373,8 +361,6 @@ final class StatsView {
             toggleChip(ui, f, t("Повтор", "Replay"), replayOn, () -> replayOn = !replayOn);
         } else if (g == 4) {
             toggleChip(ui, f, t("Снаряды", "Projectiles"), showProjectiles, () -> showProjectiles = !showProjectiles);
-        } else if (g == 3) {
-            toggleChip(ui, f, t("Промахи", "Misses"), showCdMisses, () -> showCdMisses = !showCdMisses);
         } else if (g == 2) {
             toggleChip(ui, f, t("Промахи", "Misses"), showMisses, () -> showMisses = !showMisses);
             toggleChip(ui, f, t("Без подтв.", "Unconfirmed"), showUnconfirmed, () -> showUnconfirmed = !showUnconfirmed);
@@ -409,7 +395,6 @@ final class StatsView {
                 case A_HITS -> hitList ? Help.hits() : Help.hitsChart();
                 case A_AIM -> Help.aimTab();
                 case A_STRIKES -> Help.types() + "\n" + Help.charge();
-                case A_INTERVALS -> Help.intervals();
                 case A_WTAP -> Help.wtap();
                 default -> Help.combo();
             };
@@ -522,13 +507,6 @@ final class StatsView {
                     + (j.attempts() == 0 ? "—" : Fmt.num(j.sigmaMs(), 0) + t(" мс", " ms"));
             colors = new int[]{Theme.GREEN, Theme.RED, Theme.MUTED, Theme.BLUE};
             names = new String[]{t("успех", "success"), t("рано/поздно", "early/late"), t("без прыжка", "no jump"), "fly out"};
-        } else if (graphKind() == 3) {
-            Cooldown.Summary cs = cdSum;
-            summary = t("Интервалов ", "Intervals ") + cs.n() + t(" · без заряда ", " · uncharged ") + cs.rushed() + " ("
-                    + Fmt.pct(cs.rushedPct()) + ")" + t(" · лишнее ожидание ", " · extra wait ")
-                    + (Double.isNaN(cs.waitMs()) ? "—" : Fmt.num(cs.waitMs(), 0) + t(" мс", " ms"));
-            colors = new int[]{Theme.GREEN, Theme.RED, Theme.DIM};
-            names = new String[]{t("заряжен", "charged"), t("без заряда", "uncharged"), t("промах", "miss")};
         } else if (graphKind() == 5) {
             summary = t("Противник ", "Opponent ") + nz(distName) + t(" · средняя дистанция ", " · mean distance ") + Fmt.num(distMean, 2)
                     + t(" бл.", " bl.") + (opp == null ? t(" · другой: фильтр в Противниках", " · other: filter in Opponents") : "");
@@ -576,11 +554,6 @@ final class StatsView {
             c.render(ui, x, y + 12, w, h - 12, jrPoints, new Chart.Axis(-s.jrPreMs, s.jrPostMs, 50,
                     v -> String.valueOf((long) v), s.jrLowerMs, s.jrUpperMs, Theme.alpha(Theme.GREEN, 0x40),
                     new double[]{0}, new int[]{Theme.MUTED}));
-        } else if (graphKind() == 3) {
-            // Band from charge threshold to full cooldown; hitting before the threshold means an uncharged hit.
-            long ch = Cooldown.chargedMs(cdTicks), full = Cooldown.fullMs(cdTicks);
-            c.render(ui, x, y + 12, w, h - 12, cdPoints, new Chart.Axis(0, 1200, 200, v -> String.valueOf((long) v),
-                    ch, full, Theme.alpha(Theme.GREEN, 0x40), new double[]{ch, full}, new int[]{Theme.AMBER, Theme.GREEN}));
         } else if (graphKind() == 4) {
             c.render(ui, x, y + 12, w, h - 12, takenPoints, new Chart.Axis(0, 6, 1, v -> String.valueOf((long) v),
                     0, 0, 0, new double[]{takenRange}, new int[]{Theme.ACCENT}));
@@ -833,62 +806,6 @@ final class StatsView {
 
     private Cooldown.Summary cdSummary() {
         return cdSum;
-    }
-
-    private static double commonCooldown(List<Cooldown.Interval> list) {
-        Map<Long, Integer> count = new HashMap<>();
-        for (Cooldown.Interval i : list) count.merge(Math.round(i.attack().cooldownOr() * 10), 1, Integer::sum);
-        long best = Math.round(Cooldown.DEFAULT_TICKS * 10);
-        int bestN = 0;
-        for (Map.Entry<Long, Integer> e : count.entrySet()) {
-            if (e.getValue() > bestN) {
-                best = e.getKey();
-                bestN = e.getValue();
-            }
-        }
-        return best / 10.0;
-    }
-
-    private List<Chart.Point> buildCdPoints() {
-        List<Chart.Point> out = new ArrayList<>();
-        for (Cooldown.Interval i : allIntervals) {
-            AttackEvent a = i.attack();
-            StatFilter.Hidden why = sf.attack(a);
-            if (why != null) {
-                if (showFiltered) out.add(new Chart.Point(a.t(), i.ms(), Theme.FILTERED, false, Fmt.clockMs(a.t()) + " · " + i.ms()
-                        + t(" мс · отфильтровано: ", " ms · filtered: ") + hiddenName(why), () -> cdDetails(i), a));
-                continue;
-            }
-            boolean miss = a.outcome() == Outcome.MISS;
-            if (miss && !showCdMisses) continue;
-            int color = miss ? Theme.DIM : Cooldown.charged(a.strength()) ? Theme.GREEN : Theme.RED;
-            out.add(new Chart.Point(a.t(), i.ms(), color, false, Fmt.clockMs(a.t()) + " · " + i.ms() + t(" мс · заряд ", " ms · charge ")
-                    + Fmt.pct(a.strength() * 100) + " · " + nz(a.targetName()), () -> cdDetails(i), a));
-        }
-        return out;
-    }
-
-    private List<String[]> cdDetails(Cooldown.Interval i) {
-        AttackEvent a = i.attack();
-        double ticks = a.cooldownOr();
-        long ch = Cooldown.chargedMs(ticks), full = Cooldown.fullMs(ticks), d = i.ms() - ch;
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{Cooldown.charged(a.strength()) ? t("Удар с зарядом", "Charged hit") : t("Удар без заряда", "Uncharged hit"), ""});
-        rows.add(new String[]{t("Время от начала", "Time from start"), Fmt.clockMs(a.t())});
-        rows.add(new String[]{t("От прошлой атаки", "Since last attack"), i.ms() + t(" мс", " ms")});
-        rows.add(new String[]{t("Относительно порога", "Relative to threshold"), d < 0 ? t("раньше на ", "early by ") + (-d) + t(" мс", " ms")
-                : t("позже на ", "late by ") + d + t(" мс", " ms")});
-        rows.add(new String[]{t("Заряд", "Charge"), Fmt.pct(a.strength() * 100)});
-        rows.add(new String[]{t("Порог заряда (>90%)", "Charge threshold (>90%)"), Cooldown.chargedTicks(ticks) + t(" т. = ", " t = ") + ch + t(" мс", " ms")});
-        rows.add(new String[]{t("Полная перезарядка", "Full cooldown"), Fmt.num(ticks, 1) + t(" т. = ", " t = ") + full + t(" мс", " ms")
-                + (Float.isFinite(a.cooldownTicks()) ? "" : t(" (меч, старая запись)", " (sword, old recording)"))});
-        rows.add(new String[]{t("Исход", "Result"), outcomeName(a, CombatDataClient.settings().interpMs)});
-        rows.add(new String[]{t("Цель", "Target"), nz(a.targetName())});
-        rows.add(new String[]{t("Тип удара", "Hit type"), typeName(a.type())});
-        rows.add(new String[]{t("Оружие", "Weapon"), weaponText(a.weaponOr(), a.item())});
-        StatFilter.Hidden why = sf.attack(a);
-        if (why != null) rows.add(new String[]{t("Не в статистике", "Not counted"), hiddenName(why)});
-        return rows;
     }
 
     private static String outcomeName(AttackEvent a, int interp) {
