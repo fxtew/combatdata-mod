@@ -56,6 +56,8 @@ public final class Settings {
     public double fsX = DEFAULT_HUD_X, fsY = 0.08;
     public String theme = Themes.DEFAULT_ID;
     public List<ThemeSpec> customThemes = new ArrayList<>();
+    /** Changed from its own menu tab right away, so it is not part of the Apply/Cancel draft. */
+    public IndicatorConfig indicators = new IndicatorConfig();
 
     public int notRecordedMask() {
         int m = 0;
@@ -133,6 +135,8 @@ public final class Settings {
         }
         customThemes = themes;
         if (theme == null || !Themes.find(theme, customThemes).id().equals(theme)) theme = Themes.DEFAULT_ID;
+        if (indicators == null) indicators = new IndicatorConfig();
+        indicators.clamp();
         return this;
     }
 
@@ -149,6 +153,7 @@ public final class Settings {
         return fromMap(toMap());
     }
 
+    /** Indicators are not copied: the draft holds a stale copy of them. */
     public void copyFrom(Settings o) {
         Settings c = o.copy();
         bufferMinutes = c.bufferMinutes;
@@ -213,13 +218,14 @@ public final class Settings {
         customThemes = c.customThemes;
     }
 
-    /** Position is excluded: it is applied immediately on drag. */
+    /** Positions and indicators are excluded: they apply immediately. */
     public int diffCount(Settings o) {
         Map<String, Object> a = toMap(), b = o.toMap();
         a.remove("hudX");
         a.remove("hudY");
         a.remove("fsX");
         a.remove("fsY");
+        a.remove("indicators");
         int n = 0;
         for (Map.Entry<String, Object> e : a.entrySet()) if (!e.getValue().equals(b.get(e.getKey()))) n++;
         return n;
@@ -293,6 +299,7 @@ public final class Settings {
         List<Object> themes = new ArrayList<>();
         for (ThemeSpec t : customThemes) themes.add(t.toMap());
         m.put("customThemes", themes);
+        m.put("indicators", indicators.toMap());
         return m;
     }
 
@@ -363,6 +370,7 @@ public final class Settings {
                 if (t != null) s.customThemes.add(t);
             }
         }
+        s.indicators = IndicatorConfig.fromMap(m.get("indicators"));
         return s.clamp();
     }
 

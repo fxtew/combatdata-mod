@@ -29,6 +29,7 @@ public final class CombatDataClient implements ClientModInitializer {
     public static KeyMapping SAVE;
     public static KeyMapping MARKER;
     public static KeyMapping RESET;
+    public static KeyMapping INDICATORS;
 
     private static Settings settings = new Settings();
 
@@ -65,6 +66,8 @@ public final class CombatDataClient implements ClientModInitializer {
                 new KeyMapping("key.combatdata.marker", GLFW.GLFW_KEY_UNKNOWN, category));
         RESET = KeyBindingHelper.registerKeyBinding(
                 new KeyMapping("key.combatdata.reset_buffer", GLFW.GLFW_KEY_UNKNOWN, category));
+        INDICATORS = KeyBindingHelper.registerKeyBinding(
+                new KeyMapping("key.combatdata.toggle_indicators", GLFW.GLFW_KEY_UNKNOWN, category));
         Commands.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> Safe.run("тик", () -> Recorder.onTick(mc)));
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> Safe.run("выход из игры", () -> Recorder.onStopping(mc)));
@@ -72,6 +75,8 @@ public final class CombatDataClient implements ClientModInitializer {
                 (g, delta) -> Safe.run("надпись REC", () -> RecHud.extract(g, delta)));
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, Identifier.fromNamespaceAndPath(MOD_ID, "fight"),
                 (g, delta) -> Safe.run("итог боя", () -> dev.combatdata.client.FightHud.extract(g, delta)));
+        HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, Identifier.fromNamespaceAndPath(MOD_ID, "indicators"),
+                (g, delta) -> Safe.run("индикаторы", () -> dev.combatdata.client.IndicatorHud.extract(g, delta)));
         LOG.info("Combat Data загружен");
     }
 }

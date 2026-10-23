@@ -3,5 +3,6 @@
   "key.combatdata.open_menu": "Открыть меню",
   "key.combatdata.save_buffer": "Сохранить буфер",
   "key.combatdata.marker": "Поставить метку",
-  "key.combatdata.reset_buffer": "Сбросить буфер (дважды)"
+  "key.combatdata.reset_buffer": "Сбросить буфер (дважды)",
+  "key.combatdata.toggle_indicators": "Индикаторы: показать/скрыть"
 }
