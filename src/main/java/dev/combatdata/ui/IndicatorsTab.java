@@ -16,6 +16,7 @@ import static dev.combatdata.core.Lang.t;
 /** Indicator settings. Unlike the Settings tab, every change applies and saves at once, so the HUD is the preview. */
 final class IndicatorsTab implements Tab {
     private static final int INDENT = 12;
+    private boolean expandAll;
     private final MenuScreen menu;
     private double scroll;
     private int maxScroll;
@@ -56,17 +57,33 @@ final class IndicatorsTab implements Tab {
         int ix = panelX + 1, iy = panelY + 1, iw = panelW - 2, ih = panelH - 2;
         ui.g.enableScissor(ix, iy, ix + iw, iy + ih);
         ui.clip(ix, iy, iw, ih);
-        int top = iy - (int) scroll, cy = top;
-        for (Kind k : Kind.values()) cy = indicator(ui, ix, cy, iw, k);
-        cy = common(ui, ix, cy, iw);
-        int content = cy - top;
+        int top = iy - (int) scroll;
+        if (ui.find != null) ui.find.at(MenuScreen.TabId.INDICATORS, 0);
+        int content = content(ui, ix, top, iw) - top;
         maxScroll = Math.max(0, content - ih);
+        if (ui.find != null) scroll += ui.find.scrollDelta(iy, ih);
         scroll = Math.max(0, Math.min(scroll, maxScroll));
         ui.unclip();
         ui.g.disableScissor();
         ui.scrollbar(panelX + panelW - 5, iy + 2, ih - 4, scroll, ih, content);
         ui.text(Draw.ellipsize(ui.font, t("Только ваши данные о том, что уже случилось. Меняется сразу.",
                 "Only your own data about what already happened. Applies at once."), w), x, footerY, Theme.DIM);
+    }
+
+    private int content(Ui ui, int x, int y, int w) {
+        for (Kind k : Kind.values()) y = indicator(ui, x, y, w, k);
+        return common(ui, x, y, w);
+    }
+
+    /** Lays out everything for the search index, with the options of switched-off indicators too. */
+    void index(Ui ui, int w) {
+        ui.find.at(MenuScreen.TabId.INDICATORS, 0);
+        expandAll = true;
+        try {
+            content(ui, 0, 0, w);
+        } finally {
+            expandAll = false;
+        }
     }
 
     @Override
@@ -106,6 +123,7 @@ final class IndicatorsTab implements Tab {
         IndicatorConfig c = cfg();
         IndicatorConfig.Element e = c.get(k);
         int rh = 32, right = x + w - 10;
+        if (ui.find != null) ui.find.group(name(k));
         row(ui, x, y, w, rh, 0, name(k), hint(k), Theme.TEXT_STRONG);
         ui.toggle(right - 20, y + (rh - 11) / 2, e.on, v -> {
             e.on = v;
@@ -123,7 +141,8 @@ final class IndicatorsTab implements Tab {
             ui.g.disableScissor();
         }
         y += rh;
-        if (!e.on) return y;
+        if (!e.on && !expandAll) return y;
+        if (ui.find != null) ui.find.parent(name(k));
         int y0 = y;
         y = options(ui, x, y, w, k, c, e);
         ui.g.fill(x + 12, y0 + 3, x + 14, y - 4, Theme.alpha(Theme.ACCENT, 0x90));
@@ -144,7 +163,7 @@ final class IndicatorsTab implements Tab {
                 y = flag(ui, x, y, w, t("Значок сердца", "Heart icon"), null, c.hpIcon, v -> c.hpIcon = v);
             }
             case REACH -> {
-                y = choice(ui, x, y, w, t("Точность", "Precision"), new String[]{"3.1", "3.12", "3.124"}, c.reachDecimals - 1,
+                y = choice(ui, x, y, w, t("Точность", "Precision"), new String[]{"2.9", "2.87", "2.874"}, c.reachDecimals - 1,
                         v -> c.reachDecimals = v + 1);
                 y = stepRow(ui, x, y, w, t("Скрывать через", "Hide after"), t("Иначе через 3 с значение сереет", "Otherwise it greys out after 3 s"),
                         c.reachHideSec == 0 ? t("никогда", "never") : c.reachHideSec + t(" с", " s"),
@@ -204,9 +223,7 @@ final class IndicatorsTab implements Tab {
 
     private int common(Ui ui, int x, int y, int w) {
         IndicatorConfig c = cfg();
-        ui.text(t("Общий вид", "Common style"), x + 10, y + 12, Theme.ACCENT);
-        ui.g.fill(x + 8, y + 23, x + w - 8, y + 24, Theme.BORDER);
-        y += 24;
+        y = SettingsTab.heading(ui, x, y, w, t("Общий вид", "Common style"));
         y = flagAt(ui, x, y, w, 0, t("Подписи", "Captions"), t("«Пинг», «Комбо» перед числом", "\"Ping\", \"Combo\" before the number"), c.labels, v -> c.labels = v);
         y = flagAt(ui, x, y, w, 0, t("Цветные значения", "Colored values"), t("Зелёный хорошо, жёлтый средне, красный плохо", "Green good, yellow fair, red bad"),
                 c.colors, v -> c.colors = v);
@@ -215,10 +232,11 @@ final class IndicatorsTab implements Tab {
                 () -> c.bgOpacity -= 10, () -> c.bgOpacity += 10);
         y = stepAt(ui, x, y, w, 0, t("Громкость звуков", "Sound volume"), null, c.soundVolume + "%",
                 () -> c.soundVolume -= 10, () -> c.soundVolume += 10);
-        row(ui, x, y, w, 30, 0, t("Клавиша скрытия", "Hide key"), t("Назначается в настройках игры → Управление", "Set in game Options → Controls"), Theme.TEXT);
-        String key = CombatDataClient.INDICATORS.isUnbound() ? "—" : CombatDataClient.INDICATORS.getTranslatedKeyMessage().getString();
-        ui.textRight(key, x + w - 10, Ui.textY(y, 30), Theme.TEXT_STRONG);
-        y += 30;
+        row(ui, x, y, w, 26, 0, t("Показать или скрыть индикаторы", "Show or hide indicators"), null, Theme.TEXT);
+        SettingsTab.keyChip(ui, x + w - 10, y + 5, CombatDataClient.INDICATORS);
+        y += 26;
+        ui.text(Draw.ellipsize(ui.font, t("Изменить: Настройки → Управление → Combat Data", "Change in: Options → Controls → Combat Data"), w - 20), x + 10, y + 8, Theme.DIM);
+        y += 24;
         row(ui, x, y, w, 30, 0, t("Всё по умолчанию", "Reset everything"), t("Вид, звуки и места; включённые остаются", "Style, sounds and places; what is on stays on"), Theme.TEXT);
         String rs = t("Сбросить", "Reset");
         int bw = ui.buttonWidth(rs);
@@ -233,6 +251,7 @@ final class IndicatorsTab implements Tab {
     }
 
     private static void row(Ui ui, int x, int y, int w, int h, int indent, String label, String hint, int color) {
+        ui.mark(label, hint, x + 4 + indent, y, w - 8 - indent, h);
         int lx = x + 10 + indent, lw = w / 2 - indent;
         int ly = hint == null ? Ui.textY(y, h) : y + h / 2 - 9;
         ui.text(Draw.ellipsize(ui.font, label, lw), lx, ly, color);
@@ -245,7 +264,7 @@ final class IndicatorsTab implements Tab {
     }
 
     private int flagAt(Ui ui, int x, int y, int w, int indent, String label, String hint, boolean value, Consumer<Boolean> set) {
-        int h = hint == null ? 24 : 30, right = x + w - 10;
+        int h = hint == null ? 26 : 30, right = x + w - 10;
         row(ui, x, y, w, h, indent, label, hint, Theme.TEXT);
         ui.toggle(right - 20, y + (h - 11) / 2, value, v -> {
             set.accept(v);
@@ -285,14 +304,14 @@ final class IndicatorsTab implements Tab {
     private int sound(Ui ui, int x, int y, int w, String label, IndicatorConfig.Sound s, Consumer<IndicatorConfig.Sound> set) {
         y = flag(ui, x, y, w, label, null, s.on(), v -> set.accept(s.withOn(v)));
         if (!s.on()) return y;
-        int right = x + w - 10, h = 24;
+        int right = x + w - 10, h = 26;
         String test = t("Проба", "Test");
         int tw = ui.buttonWidth(test), nw = 56, iw = Math.min(110, Math.max(70, w - 20 - INDENT * 2 - tw - nw - 8 - 60));
         int bx = right - tw;
-        ui.button(bx, y + 4, tw, 16, test, Ui.Kind.GHOST, cfg().soundVolume > 0,
+        ui.button(bx, y + 5, tw, 16, test, Ui.Kind.GHOST, cfg().soundVolume > 0,
                 () -> Indicators.playNow(Minecraft.getInstance(), s, cfg().soundVolume, true));
         bx -= 4 + nw;
-        ui.stepper(bx, y + 4, nw, Notes.name(s.note()), () -> {
+        ui.stepper(bx, y + 5, nw, Notes.name(s.note()), () -> {
             set.accept(s.withNote(s.note() - 1));
             Indicators.playNow(Minecraft.getInstance(), s.withNote(s.note() - 1), cfg().soundVolume, true);
             changed();
@@ -302,7 +321,7 @@ final class IndicatorsTab implements Tab {
             changed();
         });
         bx -= 4 + iw;
-        ui.stepper(bx, y + 4, iw, Draw.ellipsize(ui.font, Indicators.instrumentName(s.instrument()), iw - 30), () -> {
+        ui.stepper(bx, y + 5, iw, Draw.ellipsize(ui.font, Indicators.instrumentName(s.instrument()), iw - 30), () -> {
             IndicatorConfig.Sound n = s.withInstrument(Notes.step(s.instrument(), -1));
             set.accept(n);
             Indicators.playNow(Minecraft.getInstance(), n, cfg().soundVolume, true);
@@ -321,6 +340,7 @@ final class IndicatorsTab implements Tab {
     private static void chip(Ui ui, Flow fl, String label, boolean on, Consumer<Boolean> set) {
         int cw = ui.font.width(label) + 12;
         int[] p = fl.place(cw, false);
+        ui.mark(label, null, p[0] - 3, p[1], cw + 6, 18);
         ui.chip(p[0], p[1] + 3, cw, label, on, () -> {
             set.accept(!on);
             changed();

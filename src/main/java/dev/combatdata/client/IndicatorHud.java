@@ -132,7 +132,7 @@ public final class IndicatorHud {
         long old = Long.MIN_VALUE / 2;
         return switch (k) {
             case HEALTH -> health(c, 17.35f, 4f, 20f);
-            case REACH -> view(labeled(c, t("Дистанция", "Reach"), fmt(3.12, c.reachDecimals), c.colors ? GOOD : TEXT), 1f, old);
+            case REACH -> view(labeled(c, t("Дистанция", "Reach"), fmt(2.874, c.reachDecimals), c.colors ? GOOD : TEXT), 1f, old);
             case COMBO -> view(labeled(c, t("Комбо", "Combo"), "4", c.colors ? GOOD : TEXT), 1f, old);
             case PING -> ping(c, 42);
             case CHARGE -> chargeView(c, 0.72f, 1f);
@@ -266,9 +266,11 @@ public final class IndicatorHud {
     }
 
     private static View tbView(IndicatorConfig c, double dist, float alpha, long popAt) {
+        boolean hasDist = c.tbDistance && Double.isFinite(dist);
         List<Seg> s = new ArrayList<>(2);
-        s.add(new Seg("3 block hit", c.colors ? MID : TEXT));
-        if (c.tbDistance && Double.isFinite(dist)) s.add(new Seg(" " + fmt(dist, 2), TEXT));
+        // Without captions the estimated distance alone stands for the hit, in the 3 block hit color.
+        if (c.labels || !hasDist) s.add(new Seg("3 block hit", c.colors ? MID : TEXT));
+        if (hasDist) s.add(new Seg((c.labels ? " " : "") + fmt(dist, 2), c.labels ? TEXT : MID));
         return view(s, alpha, popAt);
     }
 

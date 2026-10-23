@@ -94,15 +94,11 @@ final class SettingsTab implements Tab {
         ui.g.enableScissor(ix, iy, ix + iw, iy + ih);
         ui.clip(ix, iy, iw, ih);
         int top = iy - (int) scroll;
-        int bottom = switch (section) {
-            case 0 -> keys(ui, ix, heading(ui, ix, whatToRecord(ui, ix, recording(ui, ix, top, iw), iw), iw, t("Язык и клавиши", "Language and keys")), iw);
-            case 1 -> hud(ui, ix, top, iw);
-            case 2 -> filters(ui, ix, top, iw);
-            case 3 -> appearance(ui, ix, top, iw);
-            default -> advanced(ui, ix, top, iw);
-        };
+        if (ui.find != null) ui.find.at(MenuScreen.TabId.SETTINGS, section);
+        int bottom = content(ui, ix, top, iw, section);
         int content = bottom - top;
         maxScroll = Math.max(0, content - ih);
+        if (ui.find != null) scroll += ui.find.scrollDelta(iy, ih);
         scroll = Math.max(0, Math.min(scroll, maxScroll));
         ui.unclip();
         ui.g.disableScissor();
@@ -123,6 +119,39 @@ final class SettingsTab implements Tab {
         ui.button(bx, footerY, bw, 16, t("Отмена", "Cancel"), Ui.Kind.SECONDARY, pending > 0, this::cancel);
     }
 
+    private int content(Ui ui, int x, int top, int w, int s) {
+        return switch (s) {
+            case 0 -> keys(ui, x, heading(ui, x, whatToRecord(ui, x, recording(ui, x, top, w), w), w, t("Язык и клавиши", "Language and keys")), w);
+            case 1 -> hud(ui, x, top, w);
+            case 2 -> filters(ui, x, top, w);
+            case 3 -> appearance(ui, x, top, w);
+            default -> advanced(ui, x, top, w);
+        };
+    }
+
+    /** Lays out every section for the search index. */
+    void index(Ui ui, int w) {
+        if (draft == null) draft = live().copy();
+        for (int s = 0; s < sections().length; s++) {
+            ui.find.at(MenuScreen.TabId.SETTINGS, s);
+            content(ui, 0, 0, w, s);
+        }
+    }
+
+    /** Opens a section for a search result; the search then scrolls to the row. */
+    void reveal(int s) {
+        if (s != section) {
+            section = s;
+            storageList = null;
+            scroll = 0;
+        }
+    }
+
+    static String sectionName(int s) {
+        String[] n = sections();
+        return s >= 0 && s < n.length ? n[s] : "";
+    }
+
     @Override
     public boolean scrolled(double mx, double my, double dy) {
         if (mx < panelX || mx >= panelX + panelW || my < panelY || my >= panelY + panelH) return false;
@@ -137,6 +166,7 @@ final class SettingsTab implements Tab {
     }
 
     private int row(Ui ui, int x, int y, int w, int h, String label, String hint, boolean changed) {
+        ui.mark(label, hint, x + 4, y, w - 8, h);
         int ly = hint == null ? Ui.textY(y, h) : y + h / 2 - 9;
         ui.text(label, x + 10, ly, Theme.TEXT);
         if (changed) Draw.circle(ui.g, x + 10 + ui.font.width(label) + 5, ly + 1, 5, Theme.AMBER);
@@ -225,7 +255,9 @@ final class SettingsTab implements Tab {
         return y + 20;
     }
 
-    private static int heading(Ui ui, int x, int y, int w, String text) {
+    static int heading(Ui ui, int x, int y, int w, String text) {
+        if (ui.find != null) ui.find.group(text);
+        ui.mark(text, null, x + 4, y + 3, w - 8, 18);
         ui.text(text, x + 10, y + 10, Theme.ACCENT);
         ui.g.fill(x + 8, y + 21, x + w - 8, y + 22, Theme.BORDER);
         return y + 22;
@@ -503,6 +535,7 @@ final class SettingsTab implements Tab {
     private static void fsChip(Ui ui, Flow fl, String label, boolean on, java.util.function.Consumer<Boolean> set) {
         int cw = ui.font.width(label) + 12;
         int[] p = fl.place(cw, false);
+        ui.mark(label, null, p[0] - 3, p[1], cw + 6, 18);
         ui.chip(p[0], p[1] + 3, cw, label, on, () -> set.accept(!on));
     }
 
@@ -598,6 +631,7 @@ final class SettingsTab implements Tab {
     }
 
     private void themeCard(Ui ui, int x, int y, int w, dev.combatdata.core.ThemeSpec s) {
+        ui.mark(dev.combatdata.core.Themes.displayName(s), null, x - 3, y - 3, w + 6, CARD_H + 6);
         boolean sel = s.id().equals(draft.theme), hov = ui.hover(x, y, w, CARD_H);
         Draw.roundBordered(ui.g, x, y, w, CARD_H, Theme.R_PANEL, sel ? Theme.ACCENT : hov ? Theme.CTRL_HOVER : Theme.BORDER,
                 s.color(dev.combatdata.core.ThemeSpec.WINDOW));
@@ -1012,6 +1046,7 @@ final class SettingsTab implements Tab {
         y = key(ui, x, y, w, t("Сохранить буфер", "Save buffer"), CombatDataClient.SAVE);
         y = key(ui, x, y, w, t("Поставить метку", "Add marker"), CombatDataClient.MARKER);
         y = key(ui, x, y, w, t("Сбросить буфер (дважды)", "Reset buffer (twice)"), CombatDataClient.RESET);
+        y = key(ui, x, y, w, t("Показать или скрыть индикаторы", "Show or hide indicators"), CombatDataClient.INDICATORS);
         ui.text(Draw.ellipsize(ui.font, t("Сброс также: Shift + клавиша сохранения дважды, /combatdata reset confirm", "Reset also: Shift + save key twice, /combatdata reset confirm"), w - 20), x + 10, y + 8, Theme.DIM);
         y += 12;
         ui.text(t("Изменить: Настройки → Управление → Combat Data", "Change in: Options → Controls → Combat Data"), x + 10, y + 8, Theme.DIM);
@@ -1020,10 +1055,15 @@ final class SettingsTab implements Tab {
 
     private int key(Ui ui, int x, int y, int w, String label, KeyMapping km) {
         row(ui, x, y, w, 26, label, null, false);
-        String k = km.isUnbound() ? t("не назначена", "not bound") : km.getTranslatedKeyMessage().getString();
-        int kw = ui.font.width(k) + 14, kx = x + w - 10 - kw;
-        Draw.roundBordered(ui.g, kx, y + 5, kw, 16, Theme.R_CTRL, Theme.BORDER, Theme.RAISED);
-        ui.textCenter(k, kx + kw / 2, Ui.textY(y + 5, 16), km.isUnbound() ? Theme.MUTED : Theme.TEXT_STRONG);
+        keyChip(ui, x + w - 10, y + 5, km);
         return y + 26;
+    }
+
+    /** The bound key as a raised chip, right-aligned to right. Shared with the Indicators tab. */
+    static void keyChip(Ui ui, int right, int y, KeyMapping km) {
+        String k = km.isUnbound() ? t("не назначена", "not bound") : km.getTranslatedKeyMessage().getString();
+        int kw = ui.font.width(k) + 14, kx = right - kw;
+        Draw.roundBordered(ui.g, kx, y, kw, 16, Theme.R_CTRL, Theme.BORDER, Theme.RAISED);
+        ui.textCenter(k, kx + kw / 2, Ui.textY(y, 16), km.isUnbound() ? Theme.MUTED : Theme.TEXT_STRONG);
     }
 }

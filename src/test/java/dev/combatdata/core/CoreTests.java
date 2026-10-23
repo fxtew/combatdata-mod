@@ -138,6 +138,19 @@ public final class CoreTests {
         l.setParams(new JumpResetEvaluator.Params(0, 80, 200, 200, true, true));
         check("jump reset: зажатый прыжок исключается", l.taken(11_000, true) == null && !l.waitingForJump());
         check("сессия: процент jump reset", l.jrAttempts() == 3 && l.jrSuccess() == 1 && Math.abs(l.jrPct() - 100.0 / 3) < 1e-9);
+        check("поиск: ё и регистр", SearchText.norm("Ёлка FON").equals("елка fon") && SearchText.words("  a  b ").length == 2
+                && SearchText.words(" ").length == 0);
+        check("поиск: нет слова — нет результата", SearchText.score("пинг звук", "Пинг", "Ping", "Индикаторы") == -1
+                && SearchText.score("", "Пинг", "Ping", "") == -1);
+        check("поиск: подпись важнее другого языка и подсказки", SearchText.score("пинг", "Пинг", "Ping", "") > SearchText.score("пинг", "Порог пинга", "Ping limit", "")
+                && SearchText.score("reach", "Дистанция удара", "Reach", "") > SearchText.score("reach", "Размены", "Trades", "reach")
+                && SearchText.score("reach", "Размены", "Trades", "reach") > 0);
+        check("поиск: начало слова важнее середины", SearchText.score("фон", "Фон", "Background", "")
+                > SearchText.score("фон", "Непрозрачность фона", "Background opacity", "")
+                && SearchText.score("бо", "Итог боя", "", "") > SearchText.score("бо", "Автобой", "", ""));
+        check("поиск: несколько слов", SearchText.score("звук jump", "Звук: вовремя", "Sound: in time", "Индикаторы Jump reset") > 0);
+        int[] sp = SearchText.span("фона", "Непрозрачность Фона");
+        check("поиск: подсветка совпадения", sp != null && sp[0] == 15 && sp[1] == 19 && SearchText.span("x", "abc") == null);
         l.resetSession();
         check("сессия: сброс", l.hits() == 0 && l.swings() == 0 && Double.isNaN(l.accuracyPct()) && Double.isNaN(l.jrPct())
                 && l.lastJr() == null && Double.isNaN(l.lastReach()));

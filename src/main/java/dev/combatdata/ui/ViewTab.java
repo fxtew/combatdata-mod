@@ -39,6 +39,12 @@ final class ViewTab implements Tab {
         lastRefresh = System.currentTimeMillis();
     }
 
+    /** Opens a stats page from the search; without an open recording it shows the current buffer. */
+    void openPage(int sub, int mode) {
+        if (!live && rec == null) setLive();
+        stats.open(sub, mode);
+    }
+
     boolean isLive() {
         return live;
     }
