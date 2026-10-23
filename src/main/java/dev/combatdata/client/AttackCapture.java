@@ -94,6 +94,10 @@ public final class AttackCapture {
         PENDING.clear();
     }
 
+    public static boolean hasPending() {
+        return !PENDING.isEmpty();
+    }
+
     public static void clearPending() {
         PENDING.clear();
     }

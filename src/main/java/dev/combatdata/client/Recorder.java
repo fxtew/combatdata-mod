@@ -17,10 +17,15 @@ import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class Recorder {
     private static final long SAVE_COOLDOWN_MS = 5000;
     private static final long PING_INTERVAL_MS = 1000;
+    /** A manual save waits this long at most for hit confirmations and knockback measurements. */
+    private static final long SAVE_WAIT_MS = 1500;
+    /** An autosave keeps this much time before the first attack or hit taken, the rest is idle time. */
+    private static final long AUTO_LEAD_MS = 10_000;
     private static final DateTimeFormatter FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
 
     private static final BufferClock CLOCK = new BufferClock();
@@ -39,6 +44,12 @@ public final class Recorder {
     private static int lastPing;
     private static long lastSaveWall;
     private static int markers;
+    private static boolean saveQueued, menuRequested;
+    private static long saveQueuedWall;
+    private static long autoCheckedFor = Long.MIN_VALUE;
+    private static volatile int savedCount;
+    private static volatile long lastSavedWall;
+    private static volatile boolean lastSavedAuto;
 
     private Recorder() {
     }
@@ -57,7 +68,13 @@ public final class Recorder {
 
     public static boolean full() { return now() >= capacityMs(); }
 
-    public static long lastSaveWall() { return lastSaveWall; }
+    /** Wall time of the last recording written to disk, 0 if none yet. */
+    public static long lastSavedWall() { return lastSavedWall; }
+
+    public static boolean lastSavedAuto() { return lastSavedAuto; }
+
+    /** Grows after every recording written to disk, so open lists know to reload. */
+    public static int savedCount() { return savedCount; }
 
     private static long lastCombatMs = Long.MIN_VALUE / 2;
 
@@ -65,6 +82,7 @@ public final class Recorder {
 
     private static void clearCombat() {
         lastCombatMs = Long.MIN_VALUE / 2;
+        autoCheckedFor = Long.MIN_VALUE;
         FightHud.reset();
     }
 
@@ -86,6 +104,7 @@ public final class Recorder {
             else CLOCK.resume(nowNs);
             String srv = serverName(mc), dim = dimensionName(mc.level);
             if (CombatDataClient.settings().clearOnServerChange && !server.isEmpty() && !srv.equals(server)) {
+                if (CombatDataClient.settings().autoSave && worthAutoSave()) saveNow(mc, true, false);
                 AttackCapture.flushPending();
                 IncomingCapture.clearPending();
                 BUFFER.clear();
@@ -109,10 +128,7 @@ public final class Recorder {
             }
         } else {
             CLOCK.pause(nowNs);
-            if (connected) {
-                AttackCapture.flushPending();
-                IncomingCapture.clearPending();
-            }
+            if (connected) onDisconnect(mc);
         }
         connected = conn;
         AttackCapture.tick();
@@ -120,7 +136,53 @@ public final class Recorder {
         InputCapture.tick(mc);
         PositionCapture.tick(mc);
         FightHud.tick();
+        if (saveQueued && (System.currentTimeMillis() - saveQueuedWall >= SAVE_WAIT_MS
+                || (!AttackCapture.hasPending() && !IncomingCapture.hasPending()))) {
+            saveQueued = false;
+            saveNow(mc, false, connected);
+        }
+        autoSaveTick(mc);
         handleKeys(mc);
+    }
+
+    /** No ticks run in a world after this, so pending saves happen right away. */
+    private static void onDisconnect(Minecraft mc) {
+        if (saveQueued) {
+            saveQueued = false;
+            saveNow(mc, false, false);
+        } else if (CombatDataClient.settings().autoSave && worthAutoSave()) {
+            saveNow(mc, true, false);
+        }
+        AttackCapture.flushPending();
+        IncomingCapture.flushPending();
+    }
+
+    /** Closing the game: save what would be lost and wait for the writer, which is a daemon thread. */
+    public static void onStopping(Minecraft mc) {
+        if (connected) onDisconnect(mc);
+        WRITER.shutdown();
+        try {
+            WRITER.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** The fight is over when nothing happened for the fight summary delay; then the buffer is saved once. */
+    private static void autoSaveTick(Minecraft mc) {
+        Settings s = CombatDataClient.settings();
+        if (!s.autoSave || !active() || saveQueued) return;
+        long last = lastCombatMs, n = now();
+        if (last < 0 || last > n || n - last < s.fsDelaySec * 1000L || last == autoCheckedFor) return;
+        autoCheckedFor = last;
+        if (worthAutoSave()) saveNow(mc, true, true);
+    }
+
+    /** Only fights that pass the minimum fight size are saved, so a single poke does not make a file. */
+    private static boolean worthAutoSave() {
+        if (!BUFFER.hasCombatEvents()) return false;
+        StatFilter sf = CombatDataClient.settings().statFilter();
+        return !Stats.fights(sf.apply(liveCopy().events()).kept(), Stats.FIGHT_GAP_MS, sf).isEmpty();
     }
 
     private static final long RESET_CONFIRM_MS = 3000;
@@ -134,6 +196,7 @@ public final class Recorder {
         CLOCK.reset(System.nanoTime());
         lastPingMs = -PING_INTERVAL_MS;
         markers = 0;
+        saveQueued = false;
         clearCombat();
         resetAskedAt = -RESET_CONFIRM_MS;
         if (connected) BUFFER.add(new SegmentEvent(0, server, dimension, System.currentTimeMillis()));
@@ -152,6 +215,20 @@ public final class Recorder {
                 "Press again within 3 s to reset the buffer without saving."));
     }
 
+    static void addMarker(Minecraft mc) {
+        if (!active()) {
+            chat(mc, t("Запись на паузе, метку поставить нельзя.", "Recording is paused, cannot set a marker."));
+            return;
+        }
+        add(new MarkerEvent(now(), t("Метка ", "Marker ") + (++markers)));
+        chat(mc, t("Метка ", "Marker ") + markers + t(" поставлена на ", " set at ") + EventLog.formatTime(now()));
+    }
+
+    /** Opened on the next tick: a command runs from the chat screen, which closes right after it. */
+    static void requestMenu() {
+        menuRequested = true;
+    }
+
     private static void handleKeys(Minecraft mc) {
         while (CombatDataClient.SAVE.consumeClick()) {
             if (mc.hasShiftDown()) requestReset(mc);
@@ -159,14 +236,12 @@ public final class Recorder {
         }
         while (CombatDataClient.RESET.consumeClick()) requestReset(mc);
         while (CombatDataClient.MARKER.consumeClick()) {
-            if (active()) {
-                add(new MarkerEvent(now(), t("Метка ", "Marker ") + (++markers)));
-                chat(mc, t("Метка ", "Marker ") + markers + t(" поставлена на ", " set at ") + EventLog.formatTime(now()));
-            }
+            if (active()) addMarker(mc);
         }
-        while (CombatDataClient.MENU.consumeClick()) {
-            if (mc.gui.screen() == null) mc.gui.setScreen(new dev.combatdata.ui.MenuScreen());
-        }
+        boolean open = menuRequested;
+        menuRequested = false;
+        while (CombatDataClient.MENU.consumeClick()) open = true;
+        if (open && mc.gui.screen() == null) mc.gui.setScreen(new dev.combatdata.ui.MenuScreen());
     }
 
     public static int bufferSize() { return BUFFER.size(); }
@@ -182,42 +257,76 @@ public final class Recorder {
 
     public static String currentServer() { return server; }
 
+    /**
+     * Manual save. It runs a moment later: a hit right before F9 is still waiting for the server's
+     * confirmation, and saving at once would store it as unconfirmed.
+     */
     public static void save(Minecraft mc) {
+        if (saveQueued) return;
         long wall = System.currentTimeMillis();
         if (wall - lastSaveWall < SAVE_COOLDOWN_MS) {
             chat(mc, t("Подождите пару секунд перед следующим сохранением.", "Wait a couple of seconds before saving again."));
             Sounds.failed(mc);
             return;
         }
-        AttackCapture.flushPending();
-        IncomingCapture.flushPending();
-        if (!BUFFER.hasCombatEvents()) {
+        if (!BUFFER.hasCombatEvents() && !AttackCapture.hasPending() && !IncomingCapture.hasPending()) {
             chat(mc, t("В буфере нет боевых событий, сохранять нечего.", "No combat events in the buffer, nothing to save."));
             Sounds.failed(mc);
             return;
         }
-        Recording rec = BUFFER.snapshot(now(), capacityMs(), playerName, playerUuid, mcVersion(), wall)
+        lastSaveWall = wall;
+        saveQueued = true;
+        saveQueuedWall = wall;
+    }
+
+    private static void saveNow(Minecraft mc, boolean auto, boolean newSegment) {
+        AttackCapture.flushPending();
+        IncomingCapture.flushPending();
+        long wall = System.currentTimeMillis();
+        if (!BUFFER.hasCombatEvents()) {
+            if (!auto) {
+                chat(mc, t("В буфере нет боевых событий, сохранять нечего.", "No combat events in the buffer, nothing to save."));
+                Sounds.failed(mc);
+            }
+            return;
+        }
+        Recording snap = BUFFER.snapshot(now(), capacityMs(), playerName, playerUuid, mcVersion(), wall)
                 .withNotRecorded(CombatDataClient.settings().notRecordedMask());
+        long first = snap.firstCombatMs();
+        Recording rec = auto && first > AUTO_LEAD_MS ? snap.trimmedFrom(first - AUTO_LEAD_MS) : snap;
         BUFFER.clear();
         InputCapture.reset();
         CLOCK.reset(System.nanoTime());
         lastPingMs = -PING_INTERVAL_MS;
-        lastSaveWall = wall;
         markers = 0;
-        clearCombat();
-        if (connected) BUFFER.add(new SegmentEvent(0, server, dimension, wall));
+        if (auto) {
+            // Keep the fight summary card on screen; only the buffer times start over.
+            lastCombatMs = Long.MIN_VALUE / 2;
+            autoCheckedFor = Long.MIN_VALUE;
+            FightHud.newBuffer();
+        } else {
+            clearCombat();
+        }
+        if (newSegment && connected) BUFFER.add(new SegmentEvent(0, server, dimension, wall));
         Path dir = Recordings.dir();
-        Path file = dir.resolve(LocalDateTime.now().format(FILE_TIME) + "_" + sanitize(server) + Cdrec.EXT);
+        Path file = uniqueFile(dir, LocalDateTime.now().format(FILE_TIME) + "_" + sanitize(server));
         WRITER.execute(() -> {
             try {
                 Files.createDirectories(dir);
                 Cdrec.write(file, rec, modVersion());
                 ProgressData.invalidate();
-                CombatDataClient.LOG.info("[CD] запись сохранена: {} ({} событий)", file, rec.events().size());
+                CombatDataClient.LOG.info("[CD] {}: {} ({} событий)", auto ? "автосохранение" : "запись сохранена",
+                        file, rec.events().size());
+                lastSavedAuto = auto;
+                lastSavedWall = System.currentTimeMillis();
+                savedCount++;
                 Recordings.Cleanup c = Recordings.cleanup(CombatDataClient.settings());
                 mc.execute(() -> {
-                    chat(mc, t("Запись сохранена: ", "Recording saved: ") + file.getFileName());
-                    Sounds.saved(mc);
+                    // An autosave is shown only by the HUD label, so chat is not spammed after every fight.
+                    if (!auto) {
+                        chat(mc, t("Запись сохранена: ", "Recording saved: ") + file.getFileName());
+                        Sounds.saved(mc);
+                    }
                     reportCleanup(mc, c);
                 });
             } catch (Exception ex) {
@@ -228,6 +337,13 @@ public final class Recorder {
                 });
             }
         });
+    }
+
+    /** An autosave and a manual save can land in the same second. */
+    private static Path uniqueFile(Path dir, String stem) {
+        Path f = dir.resolve(stem + Cdrec.EXT);
+        for (int i = 2; Files.exists(f) && i < 100; i++) f = dir.resolve(stem + "_" + i + Cdrec.EXT);
+        return f;
     }
 
     public static void cleanupNow(Minecraft mc) {
@@ -263,11 +379,8 @@ public final class Recorder {
         return mc.hasSingleplayerServer() ? "singleplayer" : "unknown";
     }
 
-    /** ResourceKey prints as "ResourceKey[minecraft:dimension / minecraft:overworld]"; take the second part. */
     private static String dimensionName(ClientLevel level) {
-        String s = String.valueOf(level.dimension());
-        int i = s.lastIndexOf(" / ");
-        return i >= 0 ? s.substring(i + 3).replace("]", "") : s;
+        return level.dimension().identifier().toString();
     }
 
     private static String sanitize(String s) {

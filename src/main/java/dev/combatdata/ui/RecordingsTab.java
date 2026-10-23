@@ -34,7 +34,9 @@ final class RecordingsTab implements Tab {
     static String query = "";
 
     private final MenuScreen menu;
-    private List<Recordings.Entry> entries;
+    private List<Recordings.Entry> entries = List.of();
+    private boolean loading;
+    private int listToken, seenSaved = -1, openToken;
     private List<Integer> shown = List.of();
     private Path selected;
     private boolean liveSelected;
@@ -53,10 +55,18 @@ final class RecordingsTab implements Tab {
         refresh();
     }
 
+    /** Reading every file header takes a while with many recordings, so the list is loaded off the render thread. */
     void refresh() {
-        entries = Recordings.list();
-        if (selected != null && entries.stream().noneMatch(e -> e.file().equals(selected))) selected = null;
-        rebuild();
+        seenSaved = Recorder.savedCount();
+        int token = ++listToken;
+        loading = true;
+        Recordings.listAsync(list -> {
+            if (token != listToken) return;
+            loading = false;
+            entries = list;
+            if (selected != null && entries.stream().noneMatch(e -> e.file().equals(selected))) selected = null;
+            rebuild();
+        });
     }
 
     void setQuery(String q) {
@@ -66,7 +76,7 @@ final class RecordingsTab implements Tab {
     }
 
     private void rebuild() {
-        if (entries == null) return;
+
         List<RecordingQuery.Item> items = new ArrayList<>();
         for (int i = 0; i < entries.size(); i++) {
             Recordings.Entry e = entries.get(i);
@@ -92,7 +102,8 @@ final class RecordingsTab implements Tab {
 
     @Override
     public void render(Ui ui, int x, int y, int w, int h) {
-        if (entries == null) refresh();
+        // A recording written in the background (F9 or autosave) appears without pressing Refresh.
+        if (Recorder.savedCount() != seenSaved) refresh();
         boolean narrow = w < 420;
         int bx = x + w;
         String refreshL = narrow ? "↻" : t("Обновить", "Refresh");
@@ -126,9 +137,11 @@ final class RecordingsTab implements Tab {
         listY = ly + 2 + ROW;
         listW = w - 2;
         listH = lh - 3 - ROW;
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() && loading) {
+            ui.textCenter(t("Загрузка…", "Loading…"), x + w / 2, ly + lh / 2 - 4, Theme.MUTED);
+        } else if (entries.isEmpty()) {
             ui.textCenter(t("Записей пока нет", "No recordings yet"), x + w / 2, ly + lh / 2 - 10, Theme.MUTED);
-            ui.textCenter(t("Нажмите F9 в игре, чтобы сохранить буфер", "Press F9 in game to save the buffer"), x + w / 2, ly + lh / 2 + 2, Theme.DIM);
+            ui.textCenter(t("Бои сохраняются сами, F9 сохраняет буфер вручную", "Fights are saved automatically, F9 saves the buffer manually"), x + w / 2, ly + lh / 2 + 2, Theme.DIM);
         } else if (shown.isEmpty()) {
             ui.textCenter(favoritesOnly && query.isBlank() ? t("Избранных записей нет", "No favorite recordings") : t("Ничего не найдено", "Nothing found"), x + w / 2, ly + lh / 2 - 10, Theme.MUTED);
             ui.textCenter(favoritesOnly ? t("Отметьте запись звёздочкой ☆ в строке", "Mark a recording with the ☆ star in its row")
@@ -271,14 +284,17 @@ final class RecordingsTab implements Tab {
         }
         Recordings.Entry e = selectedEntry();
         if (e == null) return;
-        try {
-            Recording rec = Cdrec.read(e.file());
+        int token = ++openToken;
+        setStatus(t("Открываю запись…", "Opening the recording…"), Theme.MUTED);
+        Recordings.readAsync(e.file(), rec -> {
+            if (token != openToken) return;
             setStatus(null, Theme.MUTED);
             menu.openRecording(e, rec);
-        } catch (Exception ex) {
+        }, ex -> {
+            if (token != openToken) return;
             CombatDataClient.LOG.error("[CD] не удалось открыть запись", ex);
             setStatus(t("Не удалось открыть: ", "Could not open: ") + ex.getMessage(), Theme.RED);
-        }
+        });
     }
 
     private void rename() {

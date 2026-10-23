@@ -41,8 +41,9 @@ public final class RecHud {
     }
 
     static Label label(Settings s) {
-        long sinceSave = System.currentTimeMillis() - Recorder.lastSaveWall();
-        if (Recorder.lastSaveWall() > 0 && sinceSave < 2000) return new Label(t("Сохранено", "Saved"), GREEN, false, false);
+        long saved = Recorder.lastSavedWall(), sinceSave = System.currentTimeMillis() - saved;
+        if (saved > 0 && sinceSave < 2500) return new Label(Recorder.lastSavedAuto() ? t("Бой сохранён", "Fight saved")
+                : t("Сохранено", "Saved"), GREEN, false, false);
         String now = Recorder.clock(Recorder.shownMs()), cap = Recorder.clock(Recorder.capacityMs());
         boolean time = s.hudFormat == Settings.HUD_TIME;
         if (!Recorder.active()) return new Label("REC " + now + t(" пауза", " paused"), GREY, false, true);

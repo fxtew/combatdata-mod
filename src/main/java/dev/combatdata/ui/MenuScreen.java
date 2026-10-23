@@ -142,7 +142,7 @@ public final class MenuScreen extends Screen {
         openModal(new Modal(t("Сбросить буфер?", "Reset the buffer?"), List.of(
                 t("Всё записанное с ", "Everything recorded since ") + Fmt.clock(dev.combatdata.client.Recorder.shownMs())
                         + t(" назад будет удалено без сохранения.", " ago will be discarded without saving."),
-                t("Также: Shift+F9 дважды или /combatdata reset.", "Also: Shift+F9 twice or /combatdata reset.")), null, List.of(
+                t("Также: Shift+F9 дважды или /combatdata reset confirm.", "Also: Shift+F9 twice or /combatdata reset confirm.")), null, List.of(
                 new Modal.Btn(t("Отмена", "Cancel"), Ui.Kind.SECONDARY, s -> closeModal()),
                 new Modal.Btn(t("Сбросить", "Reset"), Ui.Kind.DANGER, s -> {
                     dev.combatdata.client.Recorder.reset(minecraft);

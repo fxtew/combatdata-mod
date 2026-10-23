@@ -75,8 +75,16 @@ public final class RecordingBuffer {
             if (events.get(i) instanceof SegmentEvent && events.get(i).t() - base <= 0) hasSegmentAtStart = true;
         }
         if (!hasSegmentAtStart && carried != null) out.add(carried.withT(0));
+        // The buffer clock stops while disconnected, so "now minus duration" is too late after a pause.
+        // A segment stores the wall time it began; the start is that plus the active time since it.
+        SegmentEvent ref = carried;
+        for (int i = start; i < events.size() && events.get(i).t() <= base; i++) {
+            if (events.get(i) instanceof SegmentEvent s) ref = s;
+        }
+        long wallStart = ref != null && ref.wallStartMs() > 0 && ref.t() <= base ? ref.wallStartMs() + (base - ref.t())
+                : wallNowMs - duration;
         for (int i = start; i < events.size(); i++) out.add(events.get(i).withT(Math.max(0L, events.get(i).t() - base)));
-        return new Recording(Recording.SCHEMA, player, playerUuid, mcVersion, wallNowMs - duration, duration, out);
+        return new Recording(Recording.SCHEMA, player, playerUuid, mcVersion, wallStart, duration, out);
     }
 
     public synchronized void clear() {

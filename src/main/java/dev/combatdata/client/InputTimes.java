@@ -1,6 +1,9 @@
 package dev.combatdata.client;
 
-/** Raw left-click time, more precise than the tick in which the game processed the attack. */
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.Minecraft;
+
+/** Raw attack click time, more precise than the tick in which the game processed the attack. */
 public final class InputTimes {
     private static final long MAX_AGE_MS = 200;
     private static volatile long lastLeftClickNs;
@@ -9,7 +12,14 @@ public final class InputTimes {
     }
 
     public static void onMouseButton(int button, int action) {
-        if (button == 0 && action == 1) lastLeftClickNs = System.nanoTime();
+        if (action == 1 && isAttackButton(button)) lastLeftClickNs = System.nanoTime();
+    }
+
+    /** Attack may be rebound to another mouse button; it is compared by the saved key name, e.g. "key.mouse.left". */
+    private static boolean isAttackButton(int button) {
+        var options = Minecraft.getInstance().options;
+        if (options == null) return button == 0;
+        return options.keyAttack.saveString().equals(InputConstants.Type.MOUSE.getOrCreate(button).getName());
     }
 
     /** Click time in buffer ms if within the last 200 ms, else -1. Consumes the click. */

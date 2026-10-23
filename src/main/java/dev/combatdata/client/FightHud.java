@@ -37,6 +37,11 @@ public final class FightHud {
     private FightHud() {
     }
 
+    /** The buffer clock restarted, so the remembered fight time no longer means anything. */
+    static void newBuffer() {
+        checkedFor = Long.MIN_VALUE;
+    }
+
     public static void reset() {
         checkedFor = Long.MIN_VALUE;
         shown = null;
