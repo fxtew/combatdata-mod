@@ -83,13 +83,8 @@ public final class MenuScreen extends Screen {
         addWidget(oppSearch);
         findBox = new EditBox(font, 0, 0, 140, 14, findBox, Component.literal(t("Поиск по меню", "Search the menu")));
         findBox.setMaxLength(48);
-        findBox.setHint(Component.literal(t("Поиск по меню (Ctrl+F)", "Search (Ctrl+F)")).withStyle(EditBox.SEARCH_HINT_STYLE));
-        findBox.setResponder(q -> {
-            // A new search rebuilds the index: rows can appear, e.g. a custom place or a new theme.
-            if (!findOpen) find.invalidate();
-            findOpen = !q.isBlank();
-            findSel = 0;
-        });
+        findBox.setHint(Component.literal(t("Что найти?", "What to find?")).withStyle(EditBox.SEARCH_HINT_STYLE));
+        findBox.setResponder(q -> findSel = 0);
         findBox.visible = false;
         addWidget(findBox);
         current().onShow();
@@ -124,23 +119,44 @@ public final class MenuScreen extends Screen {
 
     void placeSearch(int x, int y, int w, int h) {
         searchBox.visible = w >= 40;
-        searchBox.active = modal == null;
-        if (!searchBox.visible) return;
-        searchBox.setX(x);
-        searchBox.setY(y);
-        searchBox.setWidth(w);
-        searchBox.setHeight(h);
-        searchBox.render(currentG, frameMouseX, frameMouseY, frameDelta);
+        searchBox.active = modal == null && !findOpen;
+        if (searchBox.visible) field(searchBox, x, y, w, h);
     }
 
     void placeOppSearch(int x, int y, int w, int h) {
         oppSearch.visible = true;
-        oppSearch.active = modal == null;
-        oppSearch.setX(x);
-        oppSearch.setY(y);
-        oppSearch.setWidth(w);
-        oppSearch.setHeight(h);
-        oppSearch.render(currentG, frameMouseX, frameMouseY, frameDelta);
+        oppSearch.active = modal == null && !findOpen;
+        field(oppSearch, x, y, w, h);
+    }
+
+    private record Field(EditBox box, int x, int y, int w, int h) {
+        boolean contains(double px, double py) {
+            return px >= x && px < x + w && py >= y && py < y + h;
+        }
+    }
+
+    private final List<Field> fields = new ArrayList<>();
+    private static final String[] LOUPE = {".###...", "#...#..", "#...#..", "#...#..", ".###...", ".....#.", "......#"};
+
+    /**
+     * A text field in the menu style: rounded frame in theme colors with a loupe. The game field is drawn without its
+     * own frame inside it; a click anywhere on the frame focuses it.
+     */
+    private void field(EditBox b, int x, int y, int w, int h) {
+        boolean focus = getFocused() == b, hov = frameMouseX >= x && frameMouseX < x + w && frameMouseY >= y && frameMouseY < y + h;
+        Draw.roundBordered(currentG, x, y, w, h, Theme.R_CTRL, focus ? Theme.ACCENT : hov ? Theme.CTRL_HOVER : Theme.BORDER, Theme.INSET);
+        int iy = y + (h - LOUPE.length) / 2, ic = focus ? Theme.ACCENT : Theme.MUTED;
+        for (int r = 0; r < LOUPE.length; r++) {
+            for (int c = 0; c < LOUPE[r].length(); c++) if (LOUPE[r].charAt(c) == '#') currentG.fill(x + 6 + c, iy + r, x + 7 + c, iy + r + 1, ic);
+        }
+        b.setBordered(false);
+        b.setTextColor(Theme.TEXT_STRONG);
+        b.setX(x + 18);
+        b.setY(y + (h - 8) / 2);
+        b.setWidth(Math.max(10, w - 22));
+        b.setHeight(9);
+        b.render(currentG, frameMouseX, frameMouseY, frameDelta);
+        fields.add(new Field(b, x, y, w, h));
     }
 
     void focusOppSearch() {
@@ -198,7 +214,8 @@ public final class MenuScreen extends Screen {
         searchBox.visible = false;
         oppSearch.visible = false;
         if (findOpen && find.needsIndex()) buildIndex(g);
-        Ui ui = new Ui(g, font, mouseX, mouseY, targets, modal != null ? 1 : 0);
+        fields.clear();
+        Ui ui = new Ui(g, font, mouseX, mouseY, targets, modal != null || findOpen ? 1 : 0);
         ui.find = find;
         // The window must fit the screen: at GUI scale 4 on 720p the screen is only 320x180.
         int ww = Math.min(width - 4, Math.max(300, Math.min(width - 16, 560)));
@@ -219,7 +236,7 @@ public final class MenuScreen extends Screen {
         int tabPad = tabsW <= ww - 40 ? 16 : 8;
         int tabsEnd = wx + 8;
         for (TabId t : TabId.values()) tabsEnd += font.width(t.label()) + tabPad + 2;
-        placeFind(compact ? tabsEnd : wx + 10 + font.width("Combat Data"), cbx, cby, mouseX, mouseY, delta);
+        findButton(ui, compact ? tabsEnd : wx + 10 + font.width("Combat Data"), cbx, cby);
         for (TabId t : TabId.values()) {
             int tw = font.width(t.label()) + tabPad;
             boolean sel = t == tab, hov = ui.hover(tx, ty, tw, 16);
@@ -233,62 +250,97 @@ public final class MenuScreen extends Screen {
         find.at(tab, 0);
         find.beginFrame();
         dev.combatdata.client.Safe.run("вкладка меню", () -> current().render(ui, wx + 10, top, ww - 20, wy + wh - 10 - top));
-        if (modal == null && findOpen && findBox.visible) renderFind(ui);
+        findBox.visible = modal == null && findOpen;
+        if (findBox.visible) renderFind(ui, wx, wy, ww, wh, compact);
         else findH = 0;
         if (modal != null) renderModal(ui, mouseX, mouseY, delta);
-        else ui.drawTip(width, height);
+        else if (!findOpen) ui.drawTip(width, height);
     }
 
-    /** The search field sits in the header, left of the close button; hidden if the header has no room. */
-    private void placeFind(int leftLimit, int closeX, int y, int mouseX, int mouseY, float delta) {
-        int right = closeX - 6, fw = Math.min(150, right - leftLimit - 10);
-        findBox.visible = fw >= 70;
-        if (!findBox.visible) {
-            findOpen = false;
-            return;
-        }
-        findBox.active = modal == null;
-        findBox.setX(right - fw);
-        findBox.setY(y);
-        findBox.setWidth(fw);
-        findBox.setHeight(14);
-        findBox.render(currentG, mouseX, mouseY, delta);
+    /**
+     * Header entry to the search: "Search" with its shortcut as a key chip, like the key rows in Settings. Without room
+     * only the chip stays; Ctrl+F works either way.
+     */
+    private void findButton(Ui ui, int leftLimit, int closeX, int y) {
+        String label = t("Поиск", "Search"), key = "Ctrl+F";
+        int kw = font.width(key) + 10, lw = font.width(label), right = closeX - 6;
+        boolean withLabel = right - kw - 6 - lw - 6 >= leftLimit + 8;
+        int w = kw + (withLabel ? lw + 12 : 4), x = right - w;
+        if (x < leftLimit + 8) return;
+        boolean hov = ui.hover(x, y, w, 14);
+        if (hov) Draw.round(ui.g, x, y, w, 14, Theme.R_CTRL, Theme.ROW_HOVER);
+        if (withLabel) ui.text(label, x + 6, Ui.textY(y, 14), hov ? Theme.TEXT : Theme.MUTED);
+        int kx = right - kw - 2;
+        Draw.roundBordered(ui.g, kx, y + 1, kw, 12, Theme.R_CTRL, hov ? Theme.CTRL_HOVER : Theme.BORDER, Theme.RAISED);
+        ui.textCenter(key, kx + kw / 2, Ui.textY(y + 1, 12), hov ? Theme.TEXT_STRONG : Theme.TEXT);
+        ui.click(x, y, w, 14, this::openFind);
+    }
+
+    void openFind() {
+        if (modal != null) return;
+        find.invalidate();
+        findOpen = true;
+        findSel = 0;
+        findBox.setValue("");
+        setFocused(findBox);
+    }
+
+    private void closeFind() {
+        findOpen = false;
+        findH = 0;
+        setFocused(null);
     }
 
     private static final int FIND_ROW = 22, FIND_LIMIT = 8;
 
-    private void renderFind(Ui ui) {
+    /** The search panel over the menu: field on top, results under it, keys at the bottom. */
+    private void renderFind(Ui ui, int wx, int wy, int ww, int wh, boolean compact) {
         GuiGraphics g = ui.g;
-        String q = findBox.getValue();
-        findResults = find.search(q, FIND_LIMIT);
-        int total = find.count(q), n = findResults.size();
-        findSel = Math.max(0, Math.min(findSel, n - 1));
-        int w = Math.min(width - 8, Math.max(findBox.getWidth(), 250));
-        int x = Math.max(4, findBox.getX() + findBox.getWidth() - w), y = findBox.getY() + findBox.getHeight() + 3;
-        int more = total > n ? 12 : 0;
-        int h = (n == 0 ? 18 : n * FIND_ROW) + 6 + more;
-        findX = x;
-        findY = y;
-        findW = w;
-        findH = h;
         g.nextStratum();
-        Draw.roundBordered(g, x, y, w, h, Theme.R_PANEL, Theme.ACCENT, Theme.WINDOW);
-        if (n == 0) {
-            ui.text(t("Ничего не найдено", "Nothing found"), x + 8, y + 8, Theme.MUTED);
-            return;
+        ui.layer = 1;
+        g.fill(0, 0, width, height, 0x60000000);
+        String q = findBox.getValue();
+        boolean blank = q.isBlank();
+        int pw = Math.min(ww - 24, 340), px = wx + (ww - pw) / 2, py = wy + (compact ? 6 : 22);
+        int fieldH = 20, head = 6 + fieldH + 6, foot = 16;
+        int maxRows = Math.max(1, (wy + wh - 8 - py - head - foot - 14) / FIND_ROW);
+        findResults = blank ? List.of() : find.search(q, Math.min(FIND_LIMIT, maxRows));
+        int n = findResults.size(), total = blank ? 0 : find.count(q);
+        findSel = Math.max(0, Math.min(findSel, n - 1));
+        int more = total > n ? 12 : 0;
+        int body = n == 0 ? 32 : n * FIND_ROW + more + 2;
+        int ph = head + body + foot;
+        findX = px;
+        findY = py;
+        findW = pw;
+        findH = ph;
+        Draw.roundBordered(g, px, py, pw, ph, Theme.R_WINDOW, Theme.BORDER, Theme.WINDOW);
+        field(findBox, px + 6, py + 6, pw - 12, fieldH);
+        int y = py + head;
+        if (blank) {
+            ui.text(Draw.ellipsize(font, t("Настройки, индикаторы и страницы статистики", "Settings, indicators and stats pages"), pw - 20), px + 10, y + 4, Theme.MUTED);
+            ui.text(Draw.ellipsize(font, t("Например: фон, звук, reach, w-tap", "For example: background, sound, reach, w-tap"), pw - 20), px + 10, y + 16, Theme.DIM);
+        } else if (n == 0) {
+            ui.text(t("Ничего не найдено", "Nothing found"), px + 10, y + 4, Theme.MUTED);
+            ui.text(Draw.ellipsize(font, t("Попробуйте другое слово или английское название", "Try another word or the Russian name"), pw - 20), px + 10, y + 16, Theme.DIM);
         }
         for (int i = 0; i < n; i++) {
             Find.Entry e = findResults.get(i).entry();
-            int ry = y + 3 + i * FIND_ROW;
-            boolean hov = ui.hover(x + 3, ry, w - 6, FIND_ROW);
-            if (hov) findSel = i;
-            if (i == findSel) Draw.round(g, x + 3, ry, w - 6, FIND_ROW, Theme.R_CTRL, Theme.RAISED);
-            findLabel(ui, q, e.label(), x + 9, ry + 3, w - 18);
-            ui.text(Draw.ellipsize(font, findPath(e), w - 18), x + 9, ry + 12, Theme.MUTED);
-            ui.click(x + 3, ry, w - 6, FIND_ROW, () -> go(e));
+            int ry = y + i * FIND_ROW;
+            if (ui.hover(px + 4, ry, pw - 8, FIND_ROW)) findSel = i;
+            if (i == findSel) {
+                Draw.round(g, px + 4, ry, pw - 8, FIND_ROW, Theme.R_CTRL, Theme.RAISED);
+                g.fill(px + 4, ry + 4, px + 6, ry + FIND_ROW - 4, Theme.ACCENT);
+            }
+            findLabel(ui, q, e.label(), px + 11, ry + 3, pw - 22);
+            ui.text(Draw.ellipsize(font, findPath(e), pw - 22), px + 11, ry + 12, Theme.MUTED);
+            ui.click(px + 4, ry, pw - 8, FIND_ROW, () -> go(e));
         }
-        if (more > 0) ui.text(Draw.ellipsize(font, t("Ещё ", "") + (total - n) + t(": уточните запрос", " more: refine the search"), w - 18),
-                x + 9, y + h - 12, Theme.DIM);
+        if (more > 0) ui.text(Draw.ellipsize(font, t("Ещё ", "") + (total - n) + t(": уточните запрос", " more: refine the search"), pw - 20),
+                px + 11, y + n * FIND_ROW + 3, Theme.DIM);
+        g.fill(px + 6, py + ph - foot, px + pw - 6, py + ph - foot + 1, Theme.BORDER);
+        ui.text(Draw.ellipsize(font, t("↑↓ выбрать · Enter открыть · Esc закрыть", "↑↓ select · Enter open · Esc close"), pw - 20),
+                px + 10, py + ph - foot + 4, Theme.DIM);
     }
 
     /** The label with the matched part in the accent color. */
@@ -373,31 +425,26 @@ public final class MenuScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) {
         int k = event.key();
-        if (modal == null && findBox.visible && k == GLFW.GLFW_KEY_F && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) {
-            setFocused(findBox);
-            findOpen = !findBox.getValue().isBlank();
+        if (modal == null && !findOpen && k == GLFW.GLFW_KEY_F && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) {
+            openFind();
             return true;
         }
-        if (modal == null && getFocused() == findBox) {
+        if (modal == null && findOpen) {
             int n = findResults.size();
-            if (findOpen && k == GLFW.GLFW_KEY_DOWN) {
+            if (k == GLFW.GLFW_KEY_DOWN) {
                 findSel = Math.min(findSel + 1, Math.max(0, n - 1));
                 return true;
             }
-            if (findOpen && k == GLFW.GLFW_KEY_UP) {
+            if (k == GLFW.GLFW_KEY_UP) {
                 findSel = Math.max(0, findSel - 1);
                 return true;
             }
-            if (findOpen && (k == GLFW.GLFW_KEY_ENTER || k == GLFW.GLFW_KEY_KP_ENTER)) {
+            if ((k == GLFW.GLFW_KEY_ENTER || k == GLFW.GLFW_KEY_KP_ENTER)) {
                 if (n > 0) go(findResults.get(Math.min(findSel, n - 1)).entry());
                 return true;
             }
             if (k == GLFW.GLFW_KEY_ESCAPE) {
-                // First Esc closes the results, the second clears the field, the third closes the menu.
-                if (findOpen) findOpen = false;
-                else if (!findBox.getValue().isEmpty()) findBox.setValue("");
-                else setFocused(null);
-                findOpen = false;
+                closeFind();
                 return true;
             }
         }
@@ -445,16 +492,13 @@ public final class MenuScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (editBox != null && editBox.isMouseOver(event.x(), event.y())) return super.mouseClicked(event, doubleClick);
-        if (modal == null && findBox.visible && findBox.isMouseOver(event.x(), event.y())) {
-            findOpen = !findBox.getValue().isBlank();
-            return super.mouseClicked(event, doubleClick);
-        }
-        boolean inFind = findH > 0 && event.x() >= findX && event.x() < findX + findW && event.y() >= findY && event.y() < findY + findH;
-        if (modal == null && findOpen && !inFind) {
-            // The first click outside only closes the results, it does not press what is under them.
-            findOpen = false;
-            setFocused(null);
-            return true;
+        if (modal == null && findOpen) return findClicked(event, doubleClick);
+        for (Field f : fields) {
+            if (modal == null && f.box().visible && f.contains(event.x(), event.y())) {
+                setFocused(f.box());
+                super.mouseClicked(event, doubleClick);
+                return true;
+            }
         }
         if (modal == null && searchBox.isMouseOver(event.x(), event.y())) return super.mouseClicked(event, doubleClick);
         if (modal == null && oppSearch.isMouseOver(event.x(), event.y())) return super.mouseClicked(event, doubleClick);
@@ -475,6 +519,27 @@ public final class MenuScreen extends Screen {
             return true;
         }
         return modal != null || super.mouseClicked(event, doubleClick);
+    }
+
+    /** While the search panel is open it takes every click: a click outside closes it and presses nothing. */
+    private boolean findClicked(MouseButtonEvent event, boolean doubleClick) {
+        boolean inside = event.x() >= findX && event.x() < findX + findW && event.y() >= findY && event.y() < findY + findH;
+        if (!inside) {
+            closeFind();
+            return true;
+        }
+        if (event.button() == 0) {
+            for (int i = targets.size() - 1; i >= 0; i--) {
+                Ui.Target t = targets.get(i);
+                if (t.layer() >= 1 && t.contains(event.x(), event.y())) {
+                    t.action().run();
+                    return true;
+                }
+            }
+        }
+        setFocused(findBox);
+        super.mouseClicked(event, doubleClick);
+        return true;
     }
 
     @Override
@@ -498,6 +563,7 @@ public final class MenuScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (findOpen) return true;
         if (modal == null && current().scrolled(mouseX, mouseY, scrollY)) return true;
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
