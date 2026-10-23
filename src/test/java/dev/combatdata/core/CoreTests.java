@@ -158,9 +158,16 @@ public final class CoreTests {
 
     static void autosaveAndFixes() throws Exception {
         Settings st = new Settings();
-        check("автосохранение включено, подробный лог выключен по умолчанию", st.autoSave && !st.debugLog);
-        st.autoSave = false;
-        check("автосохранение сохраняется в настройках", !st.copy().autoSave);
+        check("автосохранение и подробный лог выключены по умолчанию", !st.autoSave && !st.debugLog);
+        st.autoSave = true;
+        check("автосохранение сохраняется в настройках", st.copy().autoSave);
+        RecordingBuffer cb = new RecordingBuffer();
+        cb.add(new PingEvent(10, 40));
+        cb.add(atk(20, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+        cb.add(new JumpEvent(25, 0, true, -1));
+        cb.add(from(30, A));
+        List<Event> ce = cb.combatEvents();
+        check("буфер: только удары без копии", ce.size() == 2 && ce.get(0) instanceof AttackEvent && ce.get(1) instanceof IncomingHitEvent && ce.get(0).t() == 20);
 
         List<Event> ev = List.of(new SegmentEvent(0, "srv", "minecraft:overworld", 1_000_000L), new PingEvent(1000, 40),
                 atk(5000, A, Outcome.HIT_CONFIRMED, 2.5, 1f), from(6000, A));

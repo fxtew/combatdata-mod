@@ -43,6 +43,13 @@ public final class RecordingBuffer {
         return combat > 0;
     }
 
+    /** Hits dealt and taken, uncopied: enough to find fights without copying the whole buffer. */
+    public synchronized List<Event> combatEvents() {
+        List<Event> out = new ArrayList<>(Math.max(0, combat));
+        for (Event e : events) if (e instanceof AttackEvent || e instanceof IncomingHitEvent) out.add(e);
+        return out;
+    }
+
     public synchronized long version() {
         return version;
     }

@@ -184,7 +184,7 @@ public final class Recorder {
     private static boolean worthAutoSave() {
         if (!BUFFER.hasCombatEvents()) return false;
         StatFilter sf = CombatDataClient.settings().statFilter();
-        return !Stats.fights(sf.apply(liveCopy().events()).kept(), Stats.FIGHT_GAP_MS, sf).isEmpty();
+        return !Stats.fights(sf.apply(BUFFER.combatEvents()).kept(), Stats.FIGHT_GAP_MS, sf).isEmpty();
     }
 
     private static final long RESET_CONFIRM_MS = 3000;
