@@ -82,11 +82,6 @@ final class Help {
                 "Silhouette: where your hits landed, the cross is the average point. Histograms: crosshair offset horizontally and vertically.");
     }
 
-    static String intervals() {
-        return t("Время между вашими атаками. Полоса: от момента, когда удар уже заряжен, до полной перезарядки. Левее полосы: клик раньше заряда (слабый удар). Правее: лишнее ожидание.",
-                "Time between your attacks. The band: from when the hit is already charged to full cooldown. Left of it: clicked before charge (weak hit). Right of it: waited longer than needed.");
-    }
-
     static String jumpChart() {
         return t("Каждая точка: удар по вам. По высоте: через сколько мс после него вы прыгнули (0 — момент удара, минус — до удара). Зелёная полоса: окно успеха. Метки внизу: удары без прыжка.",
                 "Each dot is a hit on you. Height: how many ms after it you jumped (0 is the hit, minus is before it). Green band: the success window. Ticks at the bottom: hits without a jump.");
