@@ -109,6 +109,7 @@ public final class IncomingCapture {
             pd.attPing = AttackCapture.ping(attacker);
         }
         PENDING.add(pd);
+        Indicators.onTaken(held);
     }
 
     /** HEAD of LivingEntity.jumpFromGround for the local player. */
@@ -117,7 +118,9 @@ public final class IncomingCapture {
         var o = Minecraft.getInstance().options;
         int keys = JumpEvent.keys(o.keyUp.isDown(), o.keyDown.isDown(), o.keyLeft.isDown(), o.keyRight.isDown(),
                 o.keySprint.isDown() || p.isSprinting());
-        Recorder.add(new JumpEvent(Recorder.now(), Recorder.tick(), p.onGround(), jumpDown ? jumpPressMs : -1, keys));
+        JumpEvent j = new JumpEvent(Recorder.now(), Recorder.tick(), p.onGround(), jumpDown ? jumpPressMs : -1, keys);
+        Recorder.add(j);
+        Indicators.onJump(j.flyOut());
     }
 
     public static void tick(Minecraft mc) {

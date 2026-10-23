@@ -3,5 +3,6 @@
   "key.combatdata.open_menu": "Open menu",
   "key.combatdata.save_buffer": "Save buffer",
   "key.combatdata.marker": "Add marker",
-  "key.combatdata.reset_buffer": "Reset buffer (press twice)"
+  "key.combatdata.reset_buffer": "Reset buffer (press twice)",
+  "key.combatdata.toggle_indicators": "Indicators: show/hide"
 }

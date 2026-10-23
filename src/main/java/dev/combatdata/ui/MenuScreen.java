@@ -16,7 +16,7 @@ import java.util.List;
 public final class MenuScreen extends Screen {
     enum TabId {
         RECORDINGS("Записи", "Recordings"), VIEW("Просмотр", "View"), PROGRESS("Прогресс", "Progress"),
-        SETTINGS("Настройки", "Settings");
+        INDICATORS("Индикаторы", "Indicators"), SETTINGS("Настройки", "Settings");
         private final String ru, en;
 
         TabId(String ru, String en) {
@@ -34,6 +34,7 @@ public final class MenuScreen extends Screen {
     final RecordingsTab recordings = new RecordingsTab(this);
     final ViewTab view = new ViewTab(this);
     final ProgressTab progress = new ProgressTab(this);
+    final IndicatorsTab indicators = new IndicatorsTab(this);
     final SettingsTab settingsTab = new SettingsTab(this);
     private TabId tab = lastTab;
     private final List<Ui.Target> targets = new ArrayList<>();
@@ -76,6 +77,7 @@ public final class MenuScreen extends Screen {
             case RECORDINGS -> recordings;
             case VIEW -> view;
             case PROGRESS -> progress;
+            case INDICATORS -> indicators;
             case SETTINGS -> settingsTab;
         };
     }
@@ -185,8 +187,12 @@ public final class MenuScreen extends Screen {
         ui.textCenter("×", cbx + cb / 2 + 1, Ui.textY(cby, cb), ch ? Theme.TEXT_STRONG : Theme.MUTED);
         ui.click(cbx, cby, cb, cb, this::onClose);
         int tx = wx + 8, ty = compact ? wy + 5 : wy + 24, line = ty + 18, top = line + 8;
+        // Narrow windows (large GUI scale) get tighter tabs so all of them fit next to the close button.
+        int tabsW = 0;
+        for (TabId t : TabId.values()) tabsW += font.width(t.label()) + 18;
+        int tabPad = tabsW <= ww - 40 ? 16 : 8;
         for (TabId t : TabId.values()) {
-            int tw = font.width(t.label()) + 16;
+            int tw = font.width(t.label()) + tabPad;
             boolean sel = t == tab, hov = ui.hover(tx, ty, tw, 16);
             if (sel) Draw.round(g, tx, ty, tw, 16, Theme.R_CTRL, Theme.RAISED);
             else if (hov) Draw.round(g, tx, ty, tw, 16, Theme.R_CTRL, Theme.ROW_HOVER);

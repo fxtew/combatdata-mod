@@ -98,6 +98,7 @@ public final class Recorder {
         long nowNs = System.nanoTime();
         boolean conn = mc.player != null && mc.level != null && mc.getConnection() != null;
         if (conn) {
+            if (!connected) Indicators.newSession();
             playerName = mc.player.getName().getString();
             playerUuid = mc.player.getUUID();
             if (mc.isPaused()) CLOCK.pause(nowNs);
@@ -136,6 +137,7 @@ public final class Recorder {
         InputCapture.tick(mc);
         PositionCapture.tick(mc);
         FightHud.tick();
+        Indicators.tick();
         if (saveQueued && (System.currentTimeMillis() - saveQueuedWall >= SAVE_WAIT_MS
                 || (!AttackCapture.hasPending() && !IncomingCapture.hasPending()))) {
             saveQueued = false;
@@ -238,6 +240,7 @@ public final class Recorder {
         while (CombatDataClient.MARKER.consumeClick()) {
             if (active()) addMarker(mc);
         }
+        while (CombatDataClient.INDICATORS.consumeClick()) Indicators.toggle(mc);
         boolean open = menuRequested;
         menuRequested = false;
         while (CombatDataClient.MENU.consumeClick()) open = true;
