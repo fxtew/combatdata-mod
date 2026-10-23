@@ -12,7 +12,7 @@ public final class Insights {
 
     public static final int MAX_SHOWN = 3;
 
-    public enum Page { ATTACK_HITS, ATTACK_AIM, ATTACK_STRIKES, ATTACK_INTERVALS, DEFENSE_JUMP, DEFENSE_KNOCKBACK, DEFENSE_TAKEN, FIGHTS_TRADES }
+    public enum Page { ATTACK_HITS, ATTACK_AIM, ATTACK_STRIKES, DEFENSE_JUMP, DEFENSE_KNOCKBACK, DEFENSE_TAKEN, FIGHTS_TRADES }
 
     public enum Tone { BAD, TIP, GOOD }
 
@@ -65,7 +65,7 @@ public final class Insights {
             double imp = weight * Math.max(1, (threshold - h.strengthMean()) / 0.05);
             return new Insight(id(), imp, Tone.BAD,
                     "Средний заряд атаки " + pct + "%: бьёте раньше перезарядки",
-                    "Mean attack charge " + pct + "%: you hit before the cooldown ends", Page.ATTACK_INTERVALS);
+                    "Mean attack charge " + pct + "%: you hit before the cooldown ends", Page.ATTACK_STRIKES);
         }
     }
 
@@ -154,7 +154,7 @@ public final class Insights {
                         p + "% of lost trades started after your miss", Page.ATTACK_HITS);
                 case WEAK -> new Insight(id(), imp, Tone.BAD,
                         p + "% проигранных разменов начались после удара без заряда",
-                        p + "% of lost trades started after an uncharged hit", Page.ATTACK_INTERVALS);
+                        p + "% of lost trades started after an uncharged hit", Page.ATTACK_STRIKES);
                 case CAUGHT -> new Insight(id(), imp, Tone.BAD,
                         p + "% проигранных разменов начались с 3 block hit против вас",
                         p + "% of lost trades started with a 3 block hit against you", Page.DEFENSE_TAKEN);
