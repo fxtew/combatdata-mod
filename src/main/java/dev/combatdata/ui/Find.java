@@ -144,12 +144,20 @@ final class Find {
         return 0;
     }
 
+    private String lastQuery;
+    private List<Entry> lastIndex;
+    private int lastLimit = -1, lastTotal;
+    private List<Result> lastResults = List.of();
+
+    /** Recomputed only when the query, the limit or the index changes, not every frame. */
     List<Result> search(String query, int limit) {
+        if (query.equals(lastQuery) && limit == lastLimit && index == lastIndex) return lastResults;
         List<Result> out = new ArrayList<>();
-        if (index == null) return out;
-        for (Entry e : index) {
-            int s = SearchText.score(query, e.label(), e.alt(), nz(e.hint()) + " " + nz(e.group()) + " " + MenuScreen.tabLabel(e.tab()));
-            if (s >= 0) out.add(new Result(e, s));
+        if (index != null) {
+            for (Entry e : index) {
+                int s = SearchText.score(query, e.label(), e.alt(), nz(e.hint()) + " " + nz(e.group()) + " " + MenuScreen.tabLabel(e.tab()));
+                if (s >= 0) out.add(new Result(e, s));
+            }
         }
         out.sort((a, b) -> Integer.compare(b.score(), a.score()));
         // The same row can be reached through several labels (a heading and its row): keep the best one.
@@ -164,18 +172,18 @@ final class Find {
                 }
             }
             if (!dup) unique.add(r);
-            if (unique.size() >= limit) break;
         }
-        return unique;
+        lastQuery = query;
+        lastLimit = limit;
+        lastIndex = index;
+        lastTotal = unique.size();
+        lastResults = unique.size() > limit ? List.copyOf(unique.subList(0, limit)) : unique;
+        return lastResults;
     }
 
-    int count(String query) {
-        int n = 0;
-        if (index == null) return 0;
-        for (Entry e : index) {
-            if (SearchText.score(query, e.label(), e.alt(), nz(e.hint()) + " " + nz(e.group()) + " " + MenuScreen.tabLabel(e.tab())) >= 0) n++;
-        }
-        return n;
+    /** Number of distinct matches of the last search. */
+    int total() {
+        return lastTotal;
     }
 
     private static String nz(String s) {

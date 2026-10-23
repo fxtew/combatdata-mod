@@ -305,7 +305,7 @@ public final class MenuScreen extends Screen {
         int fieldH = 20, head = 6 + fieldH + 6, foot = 16;
         int maxRows = Math.max(1, (wy + wh - 8 - py - head - foot - 14) / FIND_ROW);
         findResults = blank ? List.of() : find.search(q, Math.min(FIND_LIMIT, maxRows));
-        int n = findResults.size(), total = blank ? 0 : find.count(q);
+        int n = findResults.size(), total = blank ? 0 : find.total();
         findSel = Math.max(0, Math.min(findSel, n - 1));
         int more = total > n ? 12 : 0;
         int body = n == 0 ? 32 : n * FIND_ROW + more + 2;

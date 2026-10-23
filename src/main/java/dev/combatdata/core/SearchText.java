@@ -10,7 +10,7 @@ public final class SearchText {
     private SearchText() {
     }
 
-    /** Lower case and ё as е, without changing the length, so match positions stay valid for the original. */
+    /** Lower case with the Cyrillic yo folded into ie; the length stays the same, so match positions stay valid. */
     public static String norm(String s) {
         return s == null ? "" : s.toLowerCase(Locale.ROOT).replace('ё', 'е');
     }
@@ -31,7 +31,7 @@ public final class SearchText {
             if (s < 0) return -1;
             total += s;
         }
-        // Shorter labels first among equal matches: "Фон" before "Непрозрачность фона".
+        // Among equal matches the shorter label goes first: "Background" before "Background opacity".
         return total * 100 - Math.min(99, l.length());
     }
 
