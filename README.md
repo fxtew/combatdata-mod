@@ -5,8 +5,8 @@ statistics and charts in game. It only observes: nothing is sent over the networ
 
 ## Features
 
-- Rolling buffer (1–120 min) with a REC indicator on the HUD; each fight is saved automatically when it ends,
-  F9 saves the buffer manually.
+- Rolling buffer (1–120 min) with a REC indicator on the HUD; F9 saves the buffer, and fights can be saved
+  automatically when they end (off by default).
 - Hit tracking: confirmed hits, misses with their cause, reach, aim offset, crits and sweeps.
 - Jump reset, W-tap, combos, trades and 3 block hit analysis.
 - Charts, per-fight breakdown, top-down fight replay and progress across recordings.

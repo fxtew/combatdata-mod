@@ -27,7 +27,7 @@ public final class Settings {
     public int hudFormat = HUD_FULL, hudTextColor = HUD_COLOR_STATE;
     public boolean hudShowDot = true, hudBlink = true, hudShadow = false, hudHideWhenPaused = false;
     public boolean debugLog = false;
-    public boolean autoSave = true;
+    public boolean autoSave = false;
     public boolean clearOnServerChange = false;
     public int jrLowerMs = 0, jrUpperMs = 80, jrPreMs = 200, jrPostMs = 200;
     public boolean jrExcludeHeld = false;
