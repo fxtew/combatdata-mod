@@ -140,6 +140,9 @@ public final class Cdrec {
                 if (a.item() != null) m.put("item", a.item());
                 if (a.weapon() != null) m.put("weapon", a.weapon().name());
                 if (a.team() != Relation.TEAM_UNKNOWN) m.put("team", a.team());
+                if (a.hasMotion()) {
+                    m.put("tgtSide", a.targetSideBps()); m.put("tgtVy", a.targetVertBps()); m.put("turn", a.turnDps());
+                }
             }
             case IncomingHitEvent h -> {
                 m.put("k", "I"); m.put("t", h.t()); m.put("tick", h.tick());
@@ -196,7 +199,7 @@ public final class Cdrec {
                     (float) d(m, "str"), d(m, "reach"), d(m, "aim"), d(m, "aimY"), d(m, "aimP"), d(m, "u"), d(m, "v"),
                     i(m, "ping"), l(m, "click"), d(m, "ray"), d(m, "range"), d(m, "selfV"), d(m, "tgtV"),
                     m.get("tgtPing") instanceof Number n ? n.intValue() : -1, (float) d(m, "cd"), s(m, "item"),
-                    Weapon.parse(s(m, "weapon")), team(m));
+                    Weapon.parse(s(m, "weapon")), team(m), d(m, "tgtSide"), d(m, "tgtVy"), d(m, "turn"));
             case "I" -> new IncomingHitEvent(l(m, "t"), i(m, "tick"), uuid(m, "from"), s(m, "name"), b(m, "gnd"),
                     b(m, "held"), b(m, "kb"), i(m, "ping"), d(m, "kbAway"), IncomingHitEvent.Kind.parse(s(m, "hitKind")),
                     s(m, "proj"), Weapon.parse(s(m, "weapon")), s(m, "item"), team(m), d(m, "reach"), d(m, "range"),

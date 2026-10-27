@@ -78,8 +78,8 @@ final class Help {
     }
 
     static String aimTab() {
-        return t("Силуэт: куда попадали ваши удары, крестик — средняя точка. Гистограммы: отклонение прицела по горизонтали и по вертикали.",
-                "Silhouette: where your hits landed, the cross is the average point. Histograms: crosshair offset horizontally and vertically.");
+        return t("Карта: где был прицел на каждом замахе. Зелёные точки попадания, красные промахи прицелом, синие «не дотянулся» (прицел был на противнике, но дальше дальности). Наведите на точку, чтобы увидеть подробности.\nТаблицы: точность против стрейфящих (от 2 бл/с вбок) и прыгающих противников, при резких доводках (от 180°/с), в воздухе и по дистанции. Советы сверху собраны по этим данным; условие отмечается, когда точность в нём хуже средней на 15% и больше.\nУдары ближе 1 блока не считаются.",
+                "Map: where the crosshair was on every swing. Green dots are hits, red are aim misses, blue are out of range (the crosshair was on the opponent but beyond reach). Hover a dot for details.\nTables: accuracy against strafing (2+ bl/s sideways) and jumping opponents, on fast flicks (180°/s+), in the air and by distance. The tips on top come from this data; a condition is called out when its accuracy is 15 points or more below average.\nSwings closer than 1 block are not counted.");
     }
 
     static String jumpChart() {
@@ -142,8 +142,8 @@ final class Help {
     }
 
     static String fightSummary() {
-        return t("После боя (по умолчанию через 10 секунд без ударов, на 5 секунд) рядом с надписью REC появляется итог: попадания, jump reset, лучшее комбо, размены (выиграно:проиграно); по желанию дистанция, 3 block hit и полученные удары. Во время боя ничего не показывается. Учитываются фильтры статистики, бои меньше минимального размера не показываются.\nНиже настраивается, что показывать, вид, цвета, фон, масштаб, время и место. Пример сверху показывает, как будет выглядеть после «Применить».",
-                "After a fight (by default after 10 seconds without hits, for 5 seconds) a summary shows next to the REC label: hits, jump reset, best combo, trades (won:lost); optionally reach, 3 block hits and hits taken. Nothing shows during a fight. Stat filters apply, fights below the minimum size are skipped.\nBelow you choose what to show, layout, colors, background, scale, timing and place. The example on top shows how it will look after Apply.");
+        return t("После боя (по умолчанию через 10 секунд без ударов, на 5 секунд) рядом с надписью REC появляется итог: попадания, jump reset, лучшее комбо, размены (выиграно:проиграно); по желанию дистанция, 3 block hit и полученные удары. Во время боя ничего не показывается. Учитываются фильтры статистики, бои меньше минимального размера не показываются.\nНиже настраивается, что показывать, вид, цвета, фон, масштаб, время и место; меняется сразу, пример показывает, как это выглядит. Когда бой считается оконченным, задаётся в Настройки → Основные.",
+                "After a fight (by default after 10 seconds without hits, for 5 seconds) a summary shows next to the REC label: hits, jump reset, best combo, trades (won:lost); optionally reach, 3 block hits and hits taken. Nothing shows during a fight. Stat filters apply, fights below the minimum size are skipped.\nBelow you choose what to show, layout, colors, background, scale, timing and place; changes apply at once and the example shows how it looks. When a fight counts as over is set in Settings → General.");
     }
 
     static String themes() {

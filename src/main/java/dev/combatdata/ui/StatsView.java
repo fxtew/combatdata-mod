@@ -74,6 +74,7 @@ final class StatsView {
     private List<Line> timeline = List.of();
     private List<Trades.Trade> trades = List.of();
     private WTap.Result wtap = WTap.analyze(List.of());
+    private AimReport.Result aim = AimReport.analyze(List.of());
     private List<Insights.Insight> insights = List.of();
     private String key;
     private UUID opp;
@@ -182,6 +183,7 @@ final class StatsView {
         for (Cooldown.Interval i : Cooldown.intervals(rawEvents)) if (sf.attack(i.attack()) == null) kept.add(i);
         cdSum = Cooldown.summary(kept);
         wtap = WTap.analyze(events);
+        aim = AimReport.analyze(events);
         calib = Calibration.analyze(attempts, s.jumpParams());
         insights = Insights.evaluate(new Insights.Input(res, s.jumpParams()));
         computeMs = (System.nanoTime() - started) / 1_000_000L;
@@ -858,6 +860,11 @@ final class StatsView {
         rows.add(new String[]{t("Заряд", "Charge"), Fmt.pct(a.strength() * 100)});
         rows.add(new String[]{t("Прицел yaw / pitch", "Aim yaw / pitch"), Fmt.signed(a.aimYawDeg(), 1) + "° / " + Fmt.signed(a.aimPitchDeg(), 1) + "°"});
         rows.add(new String[]{t("Высота попадания", "Hit height"), Double.isFinite(a.hitV()) ? Fmt.pct(a.hitV() * 100) + t(" роста", " of height") : "—"});
+        if (a.hasMotion()) {
+            rows.add(new String[]{t("Цель вбок / вверх", "Target sideways / up"), Fmt.signed(a.targetSideBps(), 1) + " / "
+                    + Fmt.signed(a.targetVertBps(), 1) + t(" бл/с", " bl/s")});
+            rows.add(new String[]{t("Поворот прицела", "Crosshair turn"), Fmt.signed(a.turnDps(), 0) + t("°/с (плюс: вправо)", "°/s (plus: right)")});
+        }
         if (a.outcome() == Outcome.HIT_CONFIRMED) {
             double od = ThreeBlockHit.opponentDistance(a, s.interpMs);
             rows.add(new String[]{t("У противника на экране", "On opponent's screen"), Double.isNaN(od) ? t("нет данных", "no data") : "≈ " + Fmt.num(od, 1) + t(" бл.", " bl.")});
@@ -1265,64 +1272,261 @@ final class StatsView {
     /** Head/leg boundaries: the player model is 32 units tall, the head is the top 8, legs the bottom 12. */
     private static final double HEAD_V = 24.0 / 32, LEGS_V = 12.0 / 32;
 
+    /** Aim map extents around the target, blocks: half the width, and from below the feet to above the head. */
+    private static final double MAP_HALF_W = 1.0, MAP_BELOW = 0.4, MAP_ABOVE = 2.2;
+
     private int aimTab(Ui ui, int x, int y, int w) {
-        int interp = CombatDataClient.settings().interpMs;
-        List<AttackEvent> hits = new ArrayList<>();
-        for (Event e : events) {
-            if (e instanceof AttackEvent a && a.outcome() == Outcome.HIT_CONFIRMED && a.reach() >= Stats.MIN_AIM_REACH
-                    && Double.isFinite(a.hitU()) && Double.isFinite(a.hitV())) hits.add(a);
-        }
-        if (hits.isEmpty()) {
-            ui.text(t("Нет попаданий для расчёта (удары ближе 1 блока не учитываются)", "No hits to analyze (hits closer than 1 block are not counted)"), x, y, Theme.DIM);
+        AimReport.Result r = aim;
+        if (r.shots().isEmpty()) {
+            line(ui, w, t("Нет замахов для расчёта: нужны попадания или промахи по игроку дальше 1 блока.",
+                    "No swings to analyze: needs hits or misses on a player from 1 block away."), x, y, Theme.DIM);
             return y + LINE;
         }
-        int sh = 150, cardW = 96, cardH = sh + 26;
-        Draw.round(ui.g, x, y, cardW, cardH, Theme.R_CTRL, Theme.WINDOW);
-        ui.textCenter(t("Вид спереди", "Front view"), x + cardW / 2, y + 4, Theme.MUTED);
-        double unit = sh / 32.0, hw = sh * 0.3 / 1.8;
-        int ax = x + cardW / 2, top = y + 18;
-        var g = ui.g;
-        int body = Theme.RAISED, limbs = Theme.faded(Theme.RAISED_HOVER, 0.3);
-        g.fill(ax - (int) (4 * unit), top, ax + (int) (4 * unit), top + (int) (8 * unit), body);
-        g.fill(ax - (int) (4 * unit), top + (int) (8 * unit), ax + (int) (4 * unit), top + (int) (20 * unit), body);
-        g.fill(ax - (int) (8 * unit), top + (int) (8 * unit), ax - (int) (4 * unit), top + (int) (20 * unit), limbs);
-        g.fill(ax + (int) (4 * unit), top + (int) (8 * unit), ax + (int) (8 * unit), top + (int) (20 * unit), limbs);
-        g.fill(ax - (int) (4 * unit), top + (int) (20 * unit), ax - 1, top + sh, limbs);
-        g.fill(ax, top + (int) (20 * unit), ax + (int) (4 * unit), top + sh, limbs);
-        g.renderOutline(ax - (int) hw, top, (int) (hw * 2), sh, Theme.CTRL_HOVER);
-        double su = 0, sv = 0;
-        int head = 0, legs = 0;
-        for (AttackEvent a : hits) {
-            int cx = ax + (int) Math.round(a.hitU() * hw), cy = top + (int) Math.round((1 - a.hitV()) * sh);
-            Draw.circle(g, cx - 1, cy - 1, 3, ThreeBlockHit.is(a, interp) ? Theme.alpha(Theme.AMBER, 0xC0) : Theme.alpha(Theme.GREEN, 0xA0));
-            su += a.hitU();
-            sv += a.hitV();
-            if (a.hitV() >= HEAD_V) head++;
-            else if (a.hitV() < LEGS_V) legs++;
+        AimReport.Segment all = r.all();
+        line(ui, w, t("Точность прицела ", "Aim accuracy ") + Fmt.pct(all.aimPct()) + t(" · замахов ", " · swings ") + all.swings()
+                + t(" · попаданий ", " · hits ") + all.hits() + t(" · мимо прицелом ", " · aim misses ") + all.aimMisses()
+                + t(" · не дотянулся ", " · out of range ") + all.rangeMisses(), x, y, Theme.TEXT);
+        y += LINE;
+        line(ui, w, t("Промахи прицелом: ", "Aim misses: ") + (r.aimMisses() == 0 ? t("нет", "none") : sideCounts(r)), x, y, Theme.MUTED);
+        y += LINE;
+        if (r.withMotion() == 0) {
+            line(ui, w, t("Скорость цели и поворот прицела пишутся в записях новой версии мода: часть условий ниже пустая.",
+                    "Target speed and crosshair turn are recorded from a newer mod version: some conditions below are empty."), x, y, Theme.DIM);
+            y += LINE;
         }
-        double mu = su / hits.size(), mv = sv / hits.size();
-        int mx = ax + (int) Math.round(mu * hw), my = top + (int) Math.round((1 - mv) * sh);
-        g.fill(mx - 4, my, mx + 5, my + 1, Theme.ACCENT);
-        g.fill(mx, my - 4, mx + 1, my + 5, Theme.ACCENT);
+        y += 4;
+        y = aimTips(ui, x, y, w, r);
 
+        boolean narrow = w < 360;
+        int sh = narrow ? 120 : 150;
+        double k = sh / (MAP_BELOW + MAP_ABOVE);
+        // The map widens to fit its legend; extra width just shows a little more around the target.
+        int mapW = Math.max((int) Math.round(2 * MAP_HALF_W * k), legendWidth(ui)), cardW = mapW + 12, cardH = sh + 34;
+        aimMap(ui, x, y, cardW, sh, k, r);
+
+        List<AttackEvent> hits = new ArrayList<>();
+        for (AimReport.Shot s : r.shots()) if (s.kind() == AimReport.Kind.HIT) hits.add(s.a());
         int rx = x + cardW + 10, rw = w - cardW - 10, ry = y;
-        int n = hits.size();
-        String side = Math.abs(mu) < 0.05 ? t("по центру", "centered") : mu > 0 ? t("правее центра", "right of center") : t("левее центра", "left of center");
-        line(ui, rw, t("Попаданий в расчёте: ", "Hits counted: ") + n + t(" · крестик: средняя точка", " · cross: mean point"), rx, ry, Theme.TEXT);
-        ry += LINE;
-        line(ui, rw, t("Средняя точка: ", "Mean point: ") + Fmt.signed(mu, 2) + t(" по ширине (", " across the width (") + side + t("), высота ", "), height ") + Fmt.pct(mv * 100),
-                rx, ry, Theme.MUTED);
-        ry += LINE;
-        line(ui, rw, t("Голова ", "Head ") + Fmt.pct(100.0 * head / n) + t(" · тело ", " · body ") + Fmt.pct(100.0 * (n - head - legs) / n)
-                + t(" · ноги ", " · legs ") + Fmt.pct(100.0 * legs / n), rx, ry, Theme.MUTED);
-        ry += LINE + 6;
-        double[] yaw = hits.stream().mapToDouble(AttackEvent::aimYawDeg).toArray();
-        double[] pitch = hits.stream().mapToDouble(AttackEvent::aimPitchDeg).toArray();
-        ry = hist(ui, rx, ry, rw, 34, Stats.histogram(yaw, -15, 15, 15), -15, 2, "°",
-                t("Yaw, ср. |", "Yaw, avg. |") + Fmt.num(res.hits().aimYawAbsMean(), 1) + t("°| (плюс: цель правее прицела)", "°| (plus: target right of the crosshair)"), Theme.GREEN);
-        ry = hist(ui, rx, ry + 4, rw, 34, Stats.histogram(pitch, -15, 15, 15), -15, 2, "°",
-                t("Pitch, ср. |", "Pitch, avg. |") + Fmt.num(res.hits().aimPitchAbsMean(), 1) + t("°| (плюс: цель ниже прицела)", "°| (plus: target below the crosshair)"), Theme.MUTED);
-        return Math.max(y + cardH, ry);
+        if (hits.isEmpty()) {
+            line(ui, rw, t("Попаданий нет: распределение по телу пустое.", "No hits: the body breakdown is empty."), rx, ry, Theme.DIM);
+            ry += LINE;
+        } else {
+            double su = 0, sv = 0;
+            int head = 0, legs = 0, n = 0;
+            for (AimReport.Shot s : r.shots()) {
+                if (s.kind() != AimReport.Kind.HIT) continue;
+                n++;
+                su += s.x();
+                sv += s.y();
+                if (s.y() >= HEAD_V) head++;
+                else if (s.y() < LEGS_V) legs++;
+            }
+            double mu = su / n, mv = sv / n;
+            String side = Math.abs(mu) < 0.05 ? t("по центру", "centered") : mu > 0 ? t("правее центра", "right of center") : t("левее центра", "left of center");
+            line(ui, rw, t("Средняя точка попаданий: ", "Mean hit point: ") + side + t(", высота ", ", height ") + Fmt.pct(mv * 100), rx, ry, Theme.TEXT);
+            ry += LINE;
+            line(ui, rw, t("Голова ", "Head ") + Fmt.pct(100.0 * head / n) + t(" · тело ", " · body ") + Fmt.pct(100.0 * (n - head - legs) / n)
+                    + t(" · ноги ", " · legs ") + Fmt.pct(100.0 * legs / n), rx, ry, Theme.MUTED);
+            ry += LINE + 6;
+            double[] yaw = hits.stream().mapToDouble(AttackEvent::aimYawDeg).toArray();
+            double[] pitch = hits.stream().mapToDouble(AttackEvent::aimPitchDeg).toArray();
+            ry = hist(ui, rx, ry, rw, 30, Stats.histogram(yaw, -15, 15, 15), -15, 2, "°",
+                    t("Yaw попаданий, ср. |", "Yaw of hits, avg. |") + Fmt.num(res.hits().aimYawAbsMean(), 1) + t("°| (плюс: цель правее прицела)", "°| (plus: target right of the crosshair)"), Theme.GREEN);
+            ry = hist(ui, rx, ry + 4, rw, 30, Stats.histogram(pitch, -15, 15, 15), -15, 2, "°",
+                    t("Pitch попаданий, ср. |", "Pitch of hits, avg. |") + Fmt.num(res.hits().aimPitchAbsMean(), 1) + t("°| (плюс: цель ниже прицела)", "°| (plus: target below the crosshair)"), Theme.MUTED);
+        }
+        y = Math.max(y + cardH, ry) + 10;
+
+        double base = all.aimPct();
+        ui.text(t("Прицел по условиям", "Aim by condition"), x, y, Theme.TEXT_STRONG);
+        y += LINE + 2;
+        double[] at = narrow ? new double[]{0, .52, .68, .82} : new double[]{0, .56, .72, .86};
+        y = header(ui, x, y, w, at, t("Условие", "Condition"), t("Замахов", "Swings"), t("Попал", "Hits"), t("Точность", "Accuracy"));
+        y = condRow(ui, x, y, w, at, t("Цель стрейфит (от 2 бл/с вбок)", "Target strafing (2+ bl/s sideways)"), r.cond(AimReport.Cond.STRAFE), base);
+        y = condRow(ui, x, y, w, at, t("Цель не уходит в сторону", "Target not moving sideways"), r.cond(AimReport.Cond.STILL), base);
+        y = condRow(ui, x, y, w, at, t("Цель в прыжке", "Target jumping"), r.cond(AimReport.Cond.JUMPING), base);
+        y = condRow(ui, x, y, w, at, t("Цель на земле", "Target on the ground"), r.cond(AimReport.Cond.LEVEL), base);
+        y = condRow(ui, x, y, w, at, t("Резкая доводка (от 180°/с)", "Fast flick (180°/s+)"), r.cond(AimReport.Cond.FLICK), base);
+        y = condRow(ui, x, y, w, at, t("Плавно (до 60°/с)", "Smooth (under 60°/s)"), r.cond(AimReport.Cond.SMOOTH), base);
+        y = condRow(ui, x, y, w, at, t("Вы в воздухе", "You in the air"), r.cond(AimReport.Cond.SELF_AIR), base);
+        y = condRow(ui, x, y, w, at, t("Вы на земле", "You on the ground"), r.cond(AimReport.Cond.SELF_GROUND), base);
+        y = dimLines(ui, x, y + 2, w, t("Точность прицела: попадания из попаданий и промахов прицелом, «не дотянулся» сюда не входит. Красным: хуже средней на "
+                        + (int) AimReport.GAP_PCT + "% и больше, серым: меньше " + AimReport.MIN_SWINGS + " замахов.",
+                "Aim accuracy: hits out of hits and aim misses, out-of-range misses are left out. Red: " + (int) AimReport.GAP_PCT
+                        + " points or more below average, grey: fewer than " + AimReport.MIN_SWINGS + " swings."));
+        y += 10;
+
+        ui.text(t("По дистанции", "By distance"), x, y, Theme.TEXT_STRONG);
+        y += LINE + 2;
+        at = narrow ? new double[]{0, .34, .50, .66, .84} : new double[]{0, .40, .56, .72, .86};
+        y = header(ui, x, y, w, at, t("Дистанция, бл.", "Distance, bl."), t("Замахов", "Swings"), t("Попал", "Hits"),
+                t("Точность", "Accuracy"), t("Далеко", "Far"));
+        double overall = all.accuracyPct();
+        double[] e = AimReport.DIST_EDGES;
+        for (int i = 0; i < r.distance().length; i++) {
+            String name = i == 0 ? t("ближе ", "under ") + AimReport.edge(e[0]) : i == e.length ? AimReport.edge(e[e.length - 1]) + t(" и дальше", " and more")
+                    : AimReport.edge(e[i - 1]) + "–" + AimReport.edge(e[i]);
+            AimReport.Segment s = r.distance()[i];
+            if (visible(y, ROW)) {
+                boolean none = s.swings() == 0;
+                int ac = none || s.swings() < AimReport.MIN_SWINGS ? Theme.MUTED : overall - s.accuracyPct() >= AimReport.GAP_PCT ? Theme.RED : Theme.TEXT;
+                cols(ui, x, y, w, at, new String[]{name, String.valueOf(s.swings()), String.valueOf(s.hits()),
+                                none ? "—" : Fmt.pct(s.accuracyPct()), String.valueOf(s.rangeMisses())},
+                        new int[]{Theme.TEXT, Theme.MUTED, Theme.GREEN, ac, s.rangeMisses() > 0 ? Theme.AMBER : Theme.MUTED});
+            }
+            y += ROW;
+        }
+        return dimLines(ui, x, y + 2, w, t("Для промаха берётся дистанция до ближайшей точки противника. Точность здесь с учётом промахов «не дотянулся» (столбец «Далеко»).",
+                "For a miss, the distance to the nearest point of the opponent. Accuracy here includes out-of-range misses (the Far column).")) + 2;
+    }
+
+    private int dimLines(Ui ui, int x, int y, int w, String text) {
+        for (String l : ui.wrap(text, w)) {
+            if (visible(y, LINE)) ui.text(l, x, y, Theme.DIM);
+            y += LINE;
+        }
+        return y;
+    }
+
+    private static int legendWidth(Ui ui) {
+        return ui.font.width(t("попал", "hit")) + ui.font.width(t("мимо", "miss")) + ui.font.width(t("далеко", "far")) + 3 * 6 + 2 * 6;
+    }
+
+    private static String sideCounts(AimReport.Result r) {
+        List<String> parts = new ArrayList<>();
+        for (AimReport.Side s : AimReport.Side.values()) {
+            int n = r.missSides().getOrDefault(s, 0);
+            if (n > 0) parts.add(sideName(s) + " " + n);
+        }
+        return String.join(" · ", parts);
+    }
+
+    private static String sideName(AimReport.Side s) {
+        return switch (s) {
+            case LEFT -> t("слева", "left");
+            case RIGHT -> t("справа", "right");
+            case ABOVE -> t("выше", "above");
+            case BELOW -> t("ниже", "below");
+            case EDGE -> t("по краю", "at the edge");
+        };
+    }
+
+    private int condRow(Ui ui, int x, int y, int w, double[] at, String name, AimReport.Segment s, double base) {
+        if (visible(y, ROW)) {
+            boolean none = s.aimSwings() == 0, few = s.aimSwings() < AimReport.MIN_SWINGS;
+            double d = s.aimPct() - base;
+            int ac = none || few ? Theme.MUTED : d <= -AimReport.GAP_PCT ? Theme.RED : d >= AimReport.GAP_PCT ? Theme.GREEN : Theme.TEXT;
+            cols(ui, x, y, w, at, new String[]{name, String.valueOf(s.aimSwings()), String.valueOf(s.hits()),
+                            none ? "—" : Fmt.pct(s.aimPct())},
+                    new int[]{Theme.TEXT, Theme.MUTED, Theme.GREEN, ac});
+        }
+        return y + ROW;
+    }
+
+    private int aimTips(Ui ui, int x, int y, int w, AimReport.Result r) {
+        if (r.tips().isEmpty()) {
+            line(ui, w, t("Советы: явных проблем с прицелом не найдено", "Tips: no obvious aim problems found"), x, y, Theme.DIM);
+            return y + LINE + 6;
+        }
+        for (AimReport.Tip tip : r.tips()) {
+            int color = switch (tip.tone()) {
+                case BAD -> Theme.RED;
+                case TIP -> Theme.AMBER;
+                case GOOD -> Theme.GREEN;
+            };
+            List<String> lines = ui.wrap(tip.text(), w - 14);
+            if (lines.size() > 3) {
+                lines = new ArrayList<>(lines.subList(0, 3));
+                lines.set(2, Draw.ellipsize(ui.font, lines.get(2) + "…", w - 14));
+            }
+            int h = lines.size() * 10 + 4;
+            Draw.round(ui.g, x, y, w, h, Theme.R_CTRL, Theme.WINDOW);
+            ui.g.fill(x, y + 2, x + 3, y + h - 2, color);
+            int ty = y + 3;
+            for (String l : lines) {
+                ui.text(l, x + 8, ty, Theme.TEXT);
+                ty += 10;
+            }
+            y += h + 2;
+        }
+        return y + 6;
+    }
+
+    /** Every swing as a dot at the crosshair, around a silhouette of the target seen from the front. */
+    private void aimMap(Ui ui, int x, int y, int cardW, int sh, double k, AimReport.Result r) {
+        var g = ui.g;
+        int interp = CombatDataClient.settings().interpMs;
+        int cardH = sh + 34;
+        Draw.round(g, x, y, cardW, cardH, Theme.R_CTRL, Theme.WINDOW);
+        ui.textCenter(t("Где был прицел", "Where you aimed"), x + cardW / 2, y + 4, Theme.MUTED);
+        int left = x + 6, top = y + 16, mapW = cardW - 12;
+        Draw.round(g, left, top, mapW, sh, 2, Theme.INSET);
+        int ax = left + mapW / 2, feet = top + (int) Math.round(MAP_ABOVE * k);
+        int bodyH = (int) Math.round(AimReport.HEIGHT * k), head = feet - bodyH;
+        double unit = bodyH / 32.0, hw = AimReport.HALF_W * k;
+        int body = Theme.RAISED, limbs = Theme.faded(Theme.RAISED_HOVER, 0.3);
+        g.fill(ax - (int) (4 * unit), head, ax + (int) (4 * unit), head + (int) (8 * unit), body);
+        g.fill(ax - (int) (4 * unit), head + (int) (8 * unit), ax + (int) (4 * unit), head + (int) (20 * unit), body);
+        g.fill(ax - (int) (8 * unit), head + (int) (8 * unit), ax - (int) (4 * unit), head + (int) (20 * unit), limbs);
+        g.fill(ax + (int) (4 * unit), head + (int) (8 * unit), ax + (int) (8 * unit), head + (int) (20 * unit), limbs);
+        g.fill(ax - (int) (4 * unit), head + (int) (20 * unit), ax - 1, feet, limbs);
+        g.fill(ax, head + (int) (20 * unit), ax + (int) (4 * unit), feet, limbs);
+        g.renderOutline(ax - (int) hw, head, (int) (hw * 2), bodyH, Theme.CTRL_HOVER);
+        g.fill(left, feet, left + mapW, feet + 1, Theme.BORDER);
+        AimReport.Shot hovered = null;
+        // Misses first, so the hits on the body stay on top.
+        for (int pass = 0; pass < 2; pass++) {
+            for (AimReport.Shot s : r.shots()) {
+                boolean hit = s.kind() == AimReport.Kind.HIT;
+                if (hit != (pass == 1)) continue;
+                int px = ax + (int) Math.round(s.x() * hw), py = feet - (int) Math.round(s.y() * bodyH);
+                boolean out = px < left + 1 || px > left + mapW - 2 || py < top + 1 || py > top + sh - 2;
+                px = Math.max(left + 1, Math.min(left + mapW - 2, px));
+                py = Math.max(top + 1, Math.min(top + sh - 2, py));
+                int color = switch (s.kind()) {
+                    case HIT -> ThreeBlockHit.is(s.a(), interp) ? Theme.AMBER : Theme.GREEN;
+                    case MISS -> Theme.RED;
+                    case OUT_OF_RANGE -> Theme.BLUE;
+                };
+                Draw.circle(g, px - 1, py - 1, 3, Theme.alpha(color, out ? 0x70 : 0xC0));
+                if (ui.hover(px - 2, py - 2, 5, 5)) hovered = s;
+            }
+        }
+        if (hovered != null) {
+            int px = Math.max(left + 1, Math.min(left + mapW - 2, ax + (int) Math.round(hovered.x() * hw)));
+            int py = Math.max(top + 1, Math.min(top + sh - 2, feet - (int) Math.round(hovered.y() * bodyH)));
+            g.renderOutline(px - 3, py - 3, 7, 7, Theme.TEXT_STRONG);
+            ui.tip(shotText(hovered));
+        }
+        int ly = top + sh + 5, lx = left;
+        lx = legend(ui, lx, ly, Theme.GREEN, t("попал", "hit"));
+        lx = legend(ui, lx, ly, Theme.RED, t("мимо", "miss"));
+        legend(ui, lx, ly, Theme.BLUE, t("далеко", "far"));
+    }
+
+    private static int legend(Ui ui, int x, int y, int color, String name) {
+        Draw.circle(ui.g, x, y + 2, 4, color);
+        ui.text(name, x + 6, y, Theme.MUTED);
+        return x + 6 + ui.font.width(name) + 6;
+    }
+
+    private String shotText(AimReport.Shot s) {
+        AttackEvent a = s.a();
+        StringBuilder b = new StringBuilder();
+        b.append(Fmt.clockMs(a.t())).append(" · ").append(nz(a.targetName())).append(" · ").append(switch (s.kind()) {
+            case HIT -> t("попал", "hit");
+            case MISS -> t("мимо, ", "miss, ") + sideName(s.side());
+            case OUT_OF_RANGE -> t("не дотянулся", "out of range");
+        });
+        b.append('\n').append(t("Дистанция ", "Distance ")).append(Fmt.num(a.reach(), 2)).append(t(" бл.", " bl."));
+        if (a.hasMotion()) {
+            b.append('\n').append(t("Цель вбок ", "Target sideways ")).append(Fmt.signed(a.targetSideBps(), 1))
+                    .append(t(", вверх ", ", up ")).append(Fmt.signed(a.targetVertBps(), 1)).append(t(" бл/с", " bl/s"));
+            b.append('\n').append(t("Поворот прицела ", "Crosshair turn ")).append(Fmt.signed(a.turnDps(), 0)).append(t("°/с", "°/s"));
+            b.append('\n').append(t("Плюс: вправо и вверх", "Plus: to the right and up"));
+        }
+        b.append('\n').append(a.flags() != null && !a.flags().onGround() ? t("Вы в воздухе", "You in the air") : t("Вы на земле", "You on the ground"));
+        return b.toString();
     }
 
     private int strikesTab(Ui ui, int x, int y, int w) {

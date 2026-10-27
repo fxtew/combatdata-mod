@@ -38,6 +38,7 @@ public final class CoreTests {
         fightSummary();
         autosaveAndFixes();
         indicators();
+        aimReport();
         // Check names are ASCII: the Windows console (CP866) garbles Cyrillic.
         System.out.println("CoreTests: " + checks + " checks, " + failures + " failed");
         if (failures > 0) System.exit(1);
@@ -238,6 +239,82 @@ public final class CoreTests {
         var mixed = Insights.evaluate(insightIn(goodJr, lowCharge));
         check("похвала идёт после замечаний", mixed.get(0).id().equals("low-charge")
                 && mixed.get(mixed.size() - 1).tone() == Insights.Tone.GOOD);
+    }
+
+    static final AttackFlags AIR = new AttackFlags(false, false, 0.5, false, false, false, false, true, true);
+
+    static AttackEvent aimShot(long t, Outcome o, double reach, double yaw, double pitch, double side, double vert, double turn) {
+        boolean hit = o == Outcome.HIT_CONFIRMED;
+        return new AttackEvent(t, 0, A, "Alpha", o, HitType.NORMAL, GROUND, 1f, reach, Math.hypot(yaw, pitch), yaw, pitch,
+                hit ? 0.1 : Double.NaN, hit ? 0.6 : Double.NaN, 40, t - 10, hit ? reach : Double.NaN, 3.0, 0, 0, 40, 10f,
+                null, null, Relation.TEAM_UNKNOWN, side, vert, turn);
+    }
+
+    static boolean hasTip(AimReport.Result r, String id) {
+        for (AimReport.Tip t : r.tips()) if (t.id().equals(id)) return true;
+        return false;
+    }
+
+    static void aimReport() {
+        AimReport.Shot left = AimReport.shot(aimShot(1, Outcome.MISS, 2.7, 10, 0, 0, 0, 0));
+        check("прицел: промах с целью правее прицела уходит влево", left.side() == AimReport.Side.LEFT && left.x() < -1
+                && near(left.y(), 0.5, 1e-9));
+        AimReport.Shot high = AimReport.shot(aimShot(1, Outcome.MISS, 2.7, 0, 20, 0, 0, 0));
+        check("прицел: промах над головой", high.side() == AimReport.Side.ABOVE && high.y() > 1);
+        check("прицел: стороны по выходу за контур", AimReport.side(0.5, -0.2) == AimReport.Side.BELOW
+                && AimReport.side(0.9, 0.5) == AimReport.Side.EDGE && AimReport.side(2, 1.1) == AimReport.Side.RIGHT);
+        AimReport.Shot h = AimReport.shot(aimShot(1, Outcome.HIT_CONFIRMED, 2.7, 3, 1, 0, 0, 0));
+        check("прицел: попадание берёт точку на хитбоксе", h.kind() == AimReport.Kind.HIT && near(h.x(), 0.1, 1e-12)
+                && near(h.y(), 0.6, 1e-12) && h.side() == null);
+        check("прицел: вплотную и без подтверждения не считаются", AimReport.shot(aimShot(1, Outcome.MISS, 0.6, 10, 0, 0, 0, 0)) == null
+                && AimReport.shot(aimShot(1, Outcome.HIT_UNCONFIRMED, 2.7, 1, 0, 0, 0, 0)) == null);
+        check("прицел: корзины дистанции", AimReport.distBin(1.5) == 0 && AimReport.distBin(2.0) == 1
+                && AimReport.distBin(2.7) == 2 && AimReport.distBin(3.2) == 3 && AimReport.edge(2.5).equals("2.5")
+                && AimReport.edge(3).equals("3"));
+
+        // Strafing opponent moving right; the crosshair stays left of them: lagging behind.
+        List<Event> ev = new ArrayList<>();
+        for (int i = 0; i < 10; i++) ev.add(aimShot(i * 600L, Outcome.HIT_CONFIRMED, 2.6, 1, 0, 0.2, 0, 10));
+        for (int i = 0; i < 3; i++) ev.add(aimShot(10_000 + i * 600L, Outcome.HIT_CONFIRMED, 2.6, 2, 0, 4, 0, 10));
+        for (int i = 0; i < 7; i++) ev.add(aimShot(20_000 + i * 600L, Outcome.MISS, 2.6, 10, 0, 4, 0, 10));
+        AimReport.Result r = AimReport.analyze(ev);
+        check("прицел: условия стрейфа", r.cond(AimReport.Cond.STRAFE).swings() == 10 && r.cond(AimReport.Cond.STILL).swings() == 10
+                && near(r.cond(AimReport.Cond.STRAFE).aimPct(), 30, 1e-9) && r.withMotion() == 20
+                && r.cond(AimReport.Cond.SMOOTH).swings() == 20 && r.cond(AimReport.Cond.FLICK).swings() == 0);
+        check("прицел: отставание от стрейфа", r.strafeLag().first() == 7 && r.strafeLag().second() == 0
+                && r.missSides().get(AimReport.Side.LEFT) == 7);
+        check("прицел: советы по стрейфу первыми", r.tips().get(0).id().equals("aim-strafe") && hasTip(r, "aim-lag")
+                && hasTip(r, "aim-side") && r.tips().size() <= AimReport.MAX_TIPS);
+
+        // Fast turn to the right that ends right of the target: overshoot.
+        List<Event> fl = new ArrayList<>();
+        for (int i = 0; i < 5; i++) fl.add(aimShot(i * 600L, Outcome.MISS, 2.6, -10, 0, 0, 0, 300));
+        AimReport.Result fr = AimReport.analyze(fl);
+        check("прицел: перелёт при доводке", fr.flickOver().first() == 5 && hasTip(fr, "aim-overshoot"));
+
+        // Jumping opponent, misses under them.
+        List<Event> jp = new ArrayList<>();
+        for (int i = 0; i < 5; i++) jp.add(aimShot(i * 600L, Outcome.MISS, 2.6, 0, -25, 0, 5, 10));
+        AimReport.Result jr = AimReport.analyze(jp);
+        check("прицел: по прыгающим ниже", jr.jumpVert().first() == 5 && hasTip(jr, "aim-jump-low")
+                && jr.cond(AimReport.Cond.JUMPING).swings() == 5);
+
+        // Older recording: no motion, but air and distance still work.
+        AttackEvent old = new AttackEvent(1, 0, A, "Alpha", Outcome.HIT_CONFIRMED, HitType.CRIT, AIR, 1f, 2.6, 3, 1, 0, 0.1, 0.7,
+                40, 0, 2.6, 3.0, 0, 0, 40, 10f, null, null, Relation.TEAM_UNKNOWN);
+        AimReport.Result or = AimReport.analyze(List.of(old));
+        check("прицел: старая запись без скорости цели", !old.hasMotion() && or.withMotion() == 0
+                && or.cond(AimReport.Cond.STRAFE).swings() == 0 && or.cond(AimReport.Cond.SELF_AIR).hits() == 1
+                && or.distance()[2].hits() == 1);
+
+        AttackEvent moving = aimShot(5, Outcome.MISS, 2.6, 10, 0, -3.5, 4.2, 250);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> enc = (Map<String, Object>) Json.parse(Json.write(Cdrec.encode(moving)));
+        check("прицел: скорость цели и поворот сохраняются", moving.equals(Cdrec.decode(enc)) && ((AttackEvent) moving.withT(9)).hasMotion()
+                && moving.withOutcome(Outcome.HIT_CONFIRMED).turnDps() == 250);
+        Map<String, Object> noMotion = Cdrec.encode(old);
+        check("прицел: старый удар без новых ключей", !noMotion.containsKey("turn")
+                && !((AttackEvent) Cdrec.decode(noMotion)).hasMotion());
     }
 
     static void check(String what, boolean ok) {
@@ -591,6 +668,16 @@ public final class CoreTests {
         Settings hc = new Settings();
         hc.copyFrom(hv);
         check("вид надписи копируется", hc.diffCount(hv) == 0);
+        Settings hudLive = new Settings(), hudDraft = new Settings();
+        hudLive.hudScale = 1.5;
+        hudLive.fsLayout = FightSummary.LAYOUT_COLUMN;
+        hudLive.fightSummary = false;
+        hudLive.fsDelaySec = 20;
+        hudDraft.bufferMinutes = 30;
+        hudDraft.copyHudFrom(hudLive);
+        check("надпись и итог боя берутся из живых настроек, задержка боя нет", hudDraft.hudScale == 1.5
+                && hudDraft.fsLayout == FightSummary.LAYOUT_COLUMN && !hudDraft.fightSummary && hudDraft.fsDelaySec == 10
+                && hudDraft.diffCount(hudLive) == 2);
         Settings st = new Settings();
         check("хранилище и звук по умолчанию", st.storageLimitMb == 0 && st.autoDeleteDays == 0 && st.soundOnSave && st.soundVolume == 50);
         st.storageLimitMb = -5;

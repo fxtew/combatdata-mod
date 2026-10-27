@@ -11,6 +11,9 @@
   "entrypoints": {
     "client": [
       "dev.combatdata.CombatDataClient"
+    ],
+    "modmenu": [
+      "dev.combatdata.client.ModMenuEntry"
     ]
   },
   "depends": {

@@ -245,13 +245,14 @@ public final class IndicatorHud {
                 color = GOOD;
                 value = v.deltaMs() + ms;
             }
+            // Without captions a miss is as short as a success: the sign tells early from late.
             case EARLY -> {
                 color = MID;
-                value = t("рано на ", "early by ") + v.offMs() + ms;
+                value = c.labels ? t("рано на ", "early by ") + v.offMs() + ms : "-" + v.offMs() + ms;
             }
             default -> {
                 color = BAD;
-                value = t("поздно на ", "late by ") + v.offMs() + ms;
+                value = c.labels ? t("поздно на ", "late by ") + v.offMs() + ms : "+" + v.offMs() + ms;
             }
         }
         if (!c.colors) color = TEXT;

@@ -152,12 +152,18 @@ public final class AttackCapture {
         Geometry.V3 u = new Geometry.V3(center.x() - eye.x(), 0, center.z() - eye.z()).norm();
         double selfToward = ((p.getX() - p.xo) * u.x() + (p.getZ() - p.zo) * u.z()) * 20.0;
         double targetAway = ((target.getX() - target.xo) * u.x() + (target.getZ() - target.zo) * u.z()) * 20.0;
+        // Screen right for that line is (-u.z, u.x), the same convention as the hit point across the hitbox.
+        double targetSide = ((target.getX() - target.xo) * -u.z() + (target.getZ() - target.zo) * u.x()) * 20.0;
+        double targetVert = (target.getY() - target.yo) * 20.0;
+        // yRotO is the yaw at the start of the last player tick, mouse turns since then are already in getYRot.
+        // Yaw grows when turning right (south 0, west 90), the same sign as aimYaw.
+        double turn = Geometry.wrap180(p.getYRot() - p.yRotO) * 20.0;
         long n = Recorder.now();
         return new AttackEvent(n, Recorder.tick(), target.getUUID(), target.getName().getString(), outcome,
                 HitClassifier.classify(strength, f), f, strength, reach, aim.total(), aim.yaw(), aim.pitch(), uv[0],
                 uv[1], Recorder.lastPing(), InputTimes.clickAt(n), ray, p.entityInteractionRange(), selfToward,
                 targetAway, ping(target), p.getCurrentItemAttackStrengthDelay(), Weapons.id(held), Weapons.of(held),
-                Weapons.team(p, target));
+                Weapons.team(p, target), targetSide, targetVert, turn);
     }
 
     /** Target ping from the player list; -1 if absent or hidden by the server (reported as 0). */

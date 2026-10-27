@@ -70,6 +70,11 @@ public final class Ui {
         if (hov) tip = text;
     }
 
+    /** A tooltip for something hovered right now, such as a point on a chart. */
+    public void tip(String text) {
+        tip = text;
+    }
+
     private void drawI(int x, int y, boolean hov) {
         // "i" built from two fills: the Minecraft font renders it offset and too thin for a 9x9 circle.
         int c = hov ? Theme.ON_ACCENT : Theme.TEXT;
