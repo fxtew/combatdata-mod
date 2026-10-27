@@ -122,22 +122,34 @@ final class IndicatorsTab implements Tab {
         if (!l.hudVisible && !expandAll) return y;
         if (ui.find != null) ui.find.parent(name);
         int y0 = y;
-        y = stepRow(ui, x, y, w, t("Масштаб", "Scale"), null, String.format(Locale.ROOT, "%.2fx", l.hudScale),
-                () -> l.hudScale -= 0.25, () -> l.hudScale += 0.25);
-        y = stepRow(ui, x, y, w, t("Непрозрачность фона", "Background opacity"), null, l.hudBgOpacity + "%",
-                () -> l.hudBgOpacity -= 10, () -> l.hudBgOpacity += 10);
-        y = choice(ui, x, y, w, t("Формат", "Format"), new String[]{t("Полный", "Full"), t("Время", "Time"), t("Кружок", "Dot")},
-                l.hudFormat, v -> l.hudFormat = v);
-        y = choice(ui, x, y, w, t("Цвет текста", "Text color"), new String[]{t("Состояние", "State"), t("Белый", "White"), t("Серый", "Grey")},
-                l.hudTextColor, v -> l.hudTextColor = v);
-        y = flag(ui, x, y, w, t("Кружок", "Dot"), null, l.hudShowDot, v -> l.hudShowDot = v);
-        y = flag(ui, x, y, w, t("Мигание кружка", "Blinking dot"), null, l.hudBlink, v -> l.hudBlink = v);
-        y = flag(ui, x, y, w, t("Тень у текста", "Text shadow"), null, l.hudShadow, v -> l.hudShadow = v);
-        y = flag(ui, x, y, w, t("Скрывать на паузе", "Hide when paused"), t("Вне мира и в паузе одиночной игры", "Outside a world and in singleplayer pause"),
-                l.hudHideWhenPaused, v -> l.hudHideWhenPaused = v);
-        y = place(ui, x, y, w, t("Положение", "Position"), () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu)));
+        y = recOptions(ui, x, y, w, INDENT * 2);
         ui.g.fill(x + 12, y0 + 3, x + 14, y - 4, Theme.alpha(Theme.ACCENT, 0x90));
         return y;
+    }
+
+    /**
+     * REC label options, also shown in Settings → HUD (indent 0 there). Options that do nothing in the chosen format
+     * are hidden: in the dot-only format there is no text and the dot is always on.
+     */
+    int recOptions(Ui ui, int x, int y, int w, int indent) {
+        Settings l = live();
+        boolean dotOnly = l.hudFormat == Settings.HUD_DOT, dot = dotOnly || l.hudShowDot;
+        y = stepAt(ui, x, y, w, indent, t("Масштаб", "Scale"), null, String.format(Locale.ROOT, "%.2fx", l.hudScale),
+                () -> l.hudScale -= 0.25, () -> l.hudScale += 0.25);
+        y = stepAt(ui, x, y, w, indent, t("Непрозрачность фона", "Background opacity"), null, l.hudBgOpacity + "%",
+                () -> l.hudBgOpacity -= 10, () -> l.hudBgOpacity += 10);
+        y = choiceAt(ui, x, y, w, indent, t("Формат", "Format"), new String[]{t("Полный", "Full"), t("Время", "Time"), t("Кружок", "Dot")},
+                l.hudFormat, v -> l.hudFormat = v);
+        if (!dotOnly) {
+            y = choiceAt(ui, x, y, w, indent, t("Цвет текста", "Text color"), new String[]{t("Состояние", "State"), t("Белый", "White"), t("Серый", "Grey")},
+                    l.hudTextColor, v -> l.hudTextColor = v);
+            y = flagAt(ui, x, y, w, indent, t("Кружок", "Dot"), null, l.hudShowDot, v -> l.hudShowDot = v);
+        }
+        if (dot) y = flagAt(ui, x, y, w, indent, t("Мигание кружка", "Blinking dot"), null, l.hudBlink, v -> l.hudBlink = v);
+        if (!dotOnly) y = flagAt(ui, x, y, w, indent, t("Тень у текста", "Text shadow"), null, l.hudShadow, v -> l.hudShadow = v);
+        y = flagAt(ui, x, y, w, indent, t("Скрывать на паузе", "Hide when paused"), t("Вне мира и в паузе одиночной игры", "Outside a world and in singleplayer pause"),
+                l.hudHideWhenPaused, v -> l.hudHideWhenPaused = v);
+        return placeAt(ui, x, y, w, indent, t("Положение", "Position"), () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu)));
     }
 
     private int fightSummary(Ui ui, int x, int y, int w) {
@@ -193,7 +205,11 @@ final class IndicatorsTab implements Tab {
 
     /** "Move" button that opens the drag screen; the place is saved there. */
     private int place(Ui ui, int x, int y, int w, String label, Runnable open) {
-        row(ui, x, y, w, 26, INDENT * 2, label, null, Theme.TEXT);
+        return placeAt(ui, x, y, w, INDENT * 2, label, open);
+    }
+
+    private int placeAt(Ui ui, int x, int y, int w, int indent, String label, Runnable open) {
+        row(ui, x, y, w, 26, indent, label, null, Theme.TEXT);
         String bl = t("Переместить", "Move");
         int bw = ui.buttonWidth(bl);
         ui.button(x + w - 10 - bw, y + 5, bw, 16, bl, Ui.Kind.SECONDARY, true, open);
@@ -402,8 +418,12 @@ final class IndicatorsTab implements Tab {
     }
 
     private int choice(Ui ui, int x, int y, int w, String label, String[] items, int value, Consumer<Integer> set) {
+        return choiceAt(ui, x, y, w, INDENT * 2, label, items, value, set);
+    }
+
+    private int choiceAt(Ui ui, int x, int y, int w, int indent, String label, String[] items, int value, Consumer<Integer> set) {
         int right = x + w - 10, sw = ui.segmentedWidth(items);
-        row(ui, x, y, w, 26, INDENT * 2, label, null, Theme.TEXT);
+        row(ui, x, y, w, 26, indent, label, null, Theme.TEXT);
         ui.segmented(right - sw, y + 4, items, value, v -> {
             set.accept(v);
             changed();

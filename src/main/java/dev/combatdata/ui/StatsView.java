@@ -128,6 +128,7 @@ final class StatsView {
             hitChart = new Chart();
             takenChart = new Chart();
             distChart = new Chart();
+            resetAimView();
         }
     }
 
@@ -266,6 +267,7 @@ final class StatsView {
         py = top;
         pw = w;
         ph = y + h - top;
+        aimMapW = 0;
         Draw.roundBordered(ui.g, px, py, pw, ph, Theme.R_PANEL, Theme.BORDER, Theme.PANEL);
         int ix = px + 1, iy = py + 1, iw = pw - 2, ih = ph - 2;
         ui.g.enableScissor(ix, iy, ix + iw, iy + ih);
@@ -302,6 +304,10 @@ final class StatsView {
         if (graphKind() == 5 && replayOn && replayView.scrolled(mx, my, dy)) return true;
         if (chartShown()) return chart().scrolled(mx, my, dy);
         if (mx < px || mx >= px + pw || my < py || my >= py + ph) return false;
+        if (overAimMap(mx, my)) {
+            zoomAim(mx, my, dy);
+            return true;
+        }
         // Clamp now, otherwise one frame is drawn past the edge and the panel flickers.
         scroll = Math.max(0, Math.min(scroll - dy * 24, maxScroll));
         return true;
@@ -309,15 +315,34 @@ final class StatsView {
 
     boolean pressed(double mx, double my) {
         if (graphKind() == 5 && replayOn && replayView.pressed(mx, my)) return true;
+        if (!chartShown() && aimZoom > 1 && overAimMap(mx, my)) {
+            aimDrag = true;
+            aimLastX = mx;
+            aimLastY = my;
+            return true;
+        }
         return chartShown() && chart().pressed(mx, my);
     }
 
     void dragged(double mx, double my, double dx) {
+        if (aimDrag) {
+            double kz = aimK * aimZoom;
+            aimPanX -= (mx - aimLastX) / kz;
+            aimPanY += (my - aimLastY) / kz;
+            aimLastX = mx;
+            aimLastY = my;
+            clampAimPan();
+            return;
+        }
         replayView.dragged(mx);
         if (chartShown()) chart().dragged(mx, dx);
     }
 
     void released(double mx, double my) {
+        if (aimDrag) {
+            aimDrag = false;
+            return;
+        }
         if (replayView.released()) return;
         if (chartShown()) chart().released(mx, my);
     }
@@ -1273,7 +1298,11 @@ final class StatsView {
     private static final double HEAD_V = 24.0 / 32, LEGS_V = 12.0 / 32;
 
     /** Aim map extents around the target, blocks: half the width, and from below the feet to above the head. */
-    private static final double MAP_HALF_W = 0.75, MAP_BELOW = 0.25, MAP_ABOVE = 2.1;
+    private static final double MAP_HALF_W = 0.75, MAP_BELOW = 0.25, MAP_ABOVE = 2.1, AIM_MAX_ZOOM = 8;
+    /** Aim map zoom and pan (blocks), and where the map was drawn last frame, for the wheel and dragging. */
+    private double aimZoom = 1, aimPanX, aimPanY, aimK, aimLastX, aimLastY;
+    private int aimMapX, aimMapY, aimMapW, aimMapH;
+    private boolean aimDrag;
 
     private int aimTab(Ui ui, int x, int y, int w) {
         AimReport.Result r = aim;
@@ -1459,12 +1488,27 @@ final class StatsView {
         int interp = CombatDataClient.settings().interpMs;
         int cardH = sh + 34;
         Draw.round(g, x, y, cardW, cardH, Theme.R_CTRL, Theme.WINDOW);
-        ui.textCenter(t("Где был прицел", "Where you aimed"), x + cardW / 2, y + 4, Theme.MUTED);
+        if (aimZoom > 1) {
+            String zl = t("Масштаб ×", "Zoom ×") + Fmt.num(aimZoom, 1) + "  ↺";
+            boolean hov = ui.hover(x, y, cardW, 14);
+            ui.textCenter(Draw.ellipsize(ui.font, zl, cardW - 8), x + cardW / 2, y + 4, hov ? Theme.TEXT_STRONG : Theme.ACCENT);
+            ui.click(x, y, cardW, 14, this::resetAimView);
+        } else {
+            ui.textCenter(t("Где был прицел", "Where you aimed"), x + cardW / 2, y + 4, Theme.MUTED);
+        }
         int left = x + 6, top = y + 16, mapW = cardW - 12;
         Draw.round(g, left, top, mapW, sh, 2, Theme.INSET);
-        int ax = left + mapW / 2, feet = top + (int) Math.round(MAP_ABOVE * k);
-        int bodyH = (int) Math.round(AimReport.HEIGHT * k), head = feet - bodyH;
-        double unit = bodyH / 32.0, hw = AimReport.HALF_W * k;
+        aimMapX = left;
+        aimMapY = top;
+        aimMapW = mapW;
+        aimMapH = sh;
+        aimK = k;
+        // View center in blocks: across from the target center, up from the feet; the wheel zooms, dragging pans.
+        double kz = k * aimZoom, viewY = (MAP_ABOVE - MAP_BELOW) / 2 + aimPanY;
+        int ax = left + mapW / 2 - (int) Math.round(aimPanX * kz), feet = top + sh / 2 + (int) Math.round(viewY * kz);
+        int bodyH = (int) Math.round(AimReport.HEIGHT * kz), head = feet - bodyH;
+        double unit = bodyH / 32.0, hw = AimReport.HALF_W * kz;
+        g.enableScissor(left, top, left + mapW, top + sh);
         int body = Theme.RAISED, limbs = Theme.faded(Theme.RAISED_HOVER, 0.3);
         g.fill(ax - (int) (4 * unit), head, ax + (int) (4 * unit), head + (int) (8 * unit), body);
         g.fill(ax - (int) (4 * unit), head + (int) (8 * unit), ax + (int) (4 * unit), head + (int) (20 * unit), body);
@@ -1489,15 +1533,17 @@ final class StatsView {
                     case MISS -> Theme.RED;
                     case OUT_OF_RANGE -> Theme.TEXT_STRONG;
                 };
+                if ((outX || outY) && aimZoom > 1) continue;
                 if (outX || outY) {
                     // Far off the target: a short mark on the map edge, pointing the way the crosshair went.
                     int ex = outX ? (px < ax ? left : left + mapW - 2) : px - 2, ey = outY ? (py < feet ? top : top + sh - 2) : py - 2;
                     g.fill(ex, ey, ex + (outX ? 2 : 5), ey + (outY ? 2 : 5), Theme.alpha(color, 0x90));
                 } else if (s.kind() == AimReport.Kind.OUT_OF_RANGE) ring(g, px, py, Theme.alpha(color, 0xD0));
                 else Draw.circle(g, px - 1, py - 1, 3, Theme.alpha(color, 0xC0));
-                if (ui.hover(px - 2, py - 2, 5, 5)) hovered = s;
+                if (!aimDrag && ui.hover(px - 2, py - 2, 5, 5)) hovered = s;
             }
         }
+        g.disableScissor();
         if (hovered != null) {
             int px = Math.max(left + 2, Math.min(left + mapW - 3, ax + (int) Math.round(hovered.x() * hw)));
             int py = Math.max(top + 2, Math.min(top + sh - 3, feet - (int) Math.round(hovered.y() * bodyH)));
@@ -1508,6 +1554,40 @@ final class StatsView {
         lx = legend(ui, lx, ly, Theme.GREEN, t("попал", "hit"), false);
         lx = legend(ui, lx, ly, Theme.RED, t("мимо", "miss"), false);
         legend(ui, lx, ly, Theme.TEXT_STRONG, t("далеко", "far"), true);
+    }
+
+    private void resetAimView() {
+        aimZoom = 1;
+        aimPanX = aimPanY = 0;
+    }
+
+    private boolean overAimMap(double mx, double my) {
+        return aimMapW > 0 && mx >= aimMapX && mx < aimMapX + aimMapW && my >= aimMapY && my < aimMapY + aimMapH
+                && my >= py && my < py + ph;
+    }
+
+    /** Zooms around the cursor, so the point under it stays in place. */
+    private void zoomAim(double mx, double my, double dy) {
+        double kz = aimK * aimZoom, mcx = aimMapX + aimMapW / 2.0, mcy = aimMapY + aimMapH / 2.0, cy0 = (MAP_ABOVE - MAP_BELOW) / 2;
+        double wx = aimPanX + (mx - mcx) / kz, wy = cy0 + aimPanY - (my - mcy) / kz;
+        double z = Math.max(1, Math.min(AIM_MAX_ZOOM, aimZoom * (dy > 0 ? 1.25 : 0.8)));
+        if (z < 1.01) {
+            resetAimView();
+            return;
+        }
+        aimZoom = z;
+        double kz2 = aimK * z;
+        aimPanX = wx - (mx - mcx) / kz2;
+        aimPanY = wy + (my - mcy) / kz2 - cy0;
+        clampAimPan();
+    }
+
+    /** The zoomed view stays inside the unzoomed map. */
+    private void clampAimPan() {
+        double hx = aimMapW / 2.0 / aimK, hy = aimMapH / 2.0 / aimK;
+        double mx = hx - hx / aimZoom, my = hy - hy / aimZoom;
+        aimPanX = Math.max(-mx, Math.min(mx, aimPanX));
+        aimPanY = Math.max(-my, Math.min(my, aimPanY));
     }
 
     /** A 5x5 ring from plain fills: out-of-range swings, where the aim was fine and only the distance was not. */
