@@ -61,9 +61,21 @@ public final class MenuScreen extends Screen {
     private List<Find.Result> findResults = List.of();
     private int findX, findY, findW, findH;
 
+    /** Where closing the menu goes: the game, or the Mod Menu list when opened from there. */
+    private final Screen parent;
+
     public MenuScreen() {
+        this(null);
+    }
+
+    public MenuScreen(Screen parent) {
         super(Component.literal("Combat Data"));
+        this.parent = parent;
         CombatDataClient.applyLanguage(net.minecraft.client.Minecraft.getInstance());
+    }
+
+    private void leave() {
+        minecraft.setScreen(parent);
     }
 
     @Override
@@ -585,17 +597,17 @@ public final class MenuScreen extends Screen {
                     new Modal.Btn(t("Не сохранять", "Discard"), Ui.Kind.DANGER, s -> {
                         settingsTab.cancel();
                         closeModal();
-                        minecraft.setScreen(null);
+                        leave();
                     }),
                     new Modal.Btn(t("Применить", "Apply"), Ui.Kind.PRIMARY, s -> {
                         settingsTab.apply();
                         closeModal();
-                        minecraft.setScreen(null);
+                        leave();
                     }))));
             return;
         }
         CombatDataClient.saveSettings();
-        minecraft.setScreen(null);
+        leave();
     }
 
     @Override

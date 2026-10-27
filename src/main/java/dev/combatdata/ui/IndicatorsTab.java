@@ -1,14 +1,17 @@
 package dev.combatdata.ui;
 
 import dev.combatdata.CombatDataClient;
+import dev.combatdata.client.HudPositionScreen;
 import dev.combatdata.client.IndicatorHud;
 import dev.combatdata.client.IndicatorLayoutScreen;
 import dev.combatdata.client.Indicators;
 import dev.combatdata.core.IndicatorConfig;
 import dev.combatdata.core.IndicatorConfig.Kind;
 import dev.combatdata.core.Notes;
+import dev.combatdata.core.Settings;
 import net.minecraft.client.Minecraft;
 
+import java.util.Locale;
 import java.util.function.Consumer;
 
 import static dev.combatdata.core.Lang.t;
@@ -72,7 +75,129 @@ final class IndicatorsTab implements Tab {
 
     private int content(Ui ui, int x, int y, int w) {
         for (Kind k : Kind.values()) y = indicator(ui, x, y, w, k);
-        return common(ui, x, y, w);
+        y = common(ui, x, y, w);
+        y = SettingsTab.heading(ui, x, y, w, t("Надпись записи и итог боя", "Recording label and fight summary"));
+        ui.text(Draw.ellipsize(ui.font, t("Не зависят от переключателя индикаторов сверху.", "Not affected by the indicators switch on top."), w - 20),
+                x + 10, y + 6, Theme.DIM);
+        y += 18;
+        y = recLabel(ui, x, y, w);
+        return fightSummary(ui, x, y, w) + 6;
+    }
+
+    private static Settings live() {
+        return CombatDataClient.settings();
+    }
+
+    /** Header row of a block: name, hint, an optional sample on sky and grass, and the on/off switch. */
+    private int blockHead(Ui ui, int x, int y, int w, String name, String hint, String info, boolean on, Consumer<Boolean> set,
+                          int sampleW, java.util.function.BiConsumer<Integer, Integer> sample) {
+        int rh = 32, right = x + w - 10;
+        if (ui.find != null) ui.find.group(name);
+        row(ui, x, y, w, rh, 0, name, hint, Theme.TEXT_STRONG);
+        if (info != null) ui.info(x + 10 + ui.font.width(name) + 5, y + rh / 2 - 10, info);
+        ui.toggle(right - 20, y + (rh - 11) / 2, on, v -> {
+            set.accept(v);
+            changed();
+        });
+        if (sample != null) {
+            int bw = sampleW + 12, bh = 22, bx = right - 26 - bw, by = y + (rh - bh) / 2;
+            int minX = x + 10 + Math.max(ui.font.width(name) + (info != null ? Ui.INFO + 5 : 0), Math.min(ui.font.width(hint), w / 2)) + 8;
+            if (bx >= minX) {
+                ui.g.enableScissor(bx, by, bx + bw, by + bh);
+                ui.g.fill(bx, by, bx + bw, by + bh / 2, 0xFF7EA6D6);
+                ui.g.fill(bx, by + bh / 2, bx + bw, by + bh, 0xFF5D8C3A);
+                sample.accept(bx + 6, by + (bh - 13) / 2);
+                ui.g.disableScissor();
+            }
+        }
+        return y + rh;
+    }
+
+    private int recLabel(Ui ui, int x, int y, int w) {
+        Settings l = live();
+        String name = t("Надпись записи (REC)", "Recording label (REC)");
+        int sw = dev.combatdata.client.RecHud.previewWidth(ui.font, l);
+        y = blockHead(ui, x, y, w, name, t("Время буфера и сохранения, по умолчанию слева сверху", "Buffer time and saves, top left by default"),
+                null, l.hudVisible, v -> l.hudVisible = v, sw, (px, py) -> dev.combatdata.client.RecHud.preview(ui.g, ui.font, px, py, l));
+        if (!l.hudVisible && !expandAll) return y;
+        if (ui.find != null) ui.find.parent(name);
+        int y0 = y;
+        y = stepRow(ui, x, y, w, t("Масштаб", "Scale"), null, String.format(Locale.ROOT, "%.2fx", l.hudScale),
+                () -> l.hudScale -= 0.25, () -> l.hudScale += 0.25);
+        y = stepRow(ui, x, y, w, t("Непрозрачность фона", "Background opacity"), null, l.hudBgOpacity + "%",
+                () -> l.hudBgOpacity -= 10, () -> l.hudBgOpacity += 10);
+        y = choice(ui, x, y, w, t("Формат", "Format"), new String[]{t("Полный", "Full"), t("Время", "Time"), t("Кружок", "Dot")},
+                l.hudFormat, v -> l.hudFormat = v);
+        y = choice(ui, x, y, w, t("Цвет текста", "Text color"), new String[]{t("Состояние", "State"), t("Белый", "White"), t("Серый", "Grey")},
+                l.hudTextColor, v -> l.hudTextColor = v);
+        y = flag(ui, x, y, w, t("Кружок", "Dot"), null, l.hudShowDot, v -> l.hudShowDot = v);
+        y = flag(ui, x, y, w, t("Мигание кружка", "Blinking dot"), null, l.hudBlink, v -> l.hudBlink = v);
+        y = flag(ui, x, y, w, t("Тень у текста", "Text shadow"), null, l.hudShadow, v -> l.hudShadow = v);
+        y = flag(ui, x, y, w, t("Скрывать на паузе", "Hide when paused"), t("Вне мира и в паузе одиночной игры", "Outside a world and in singleplayer pause"),
+                l.hudHideWhenPaused, v -> l.hudHideWhenPaused = v);
+        y = place(ui, x, y, w, t("Положение", "Position"), () -> Minecraft.getInstance().setScreen(new HudPositionScreen(menu)));
+        ui.g.fill(x + 12, y0 + 3, x + 14, y - 4, Theme.alpha(Theme.ACCENT, 0x90));
+        return y;
+    }
+
+    private int fightSummary(Ui ui, int x, int y, int w) {
+        Settings l = live();
+        String name = t("Итог боя", "Fight summary");
+        y = blockHead(ui, x, y, w, name, t("После боя на несколько секунд", "For a few seconds after a fight"), Help.fightSummary(),
+                l.fightSummary, v -> l.fightSummary = v, 0, null);
+        if (!l.fightSummary && !expandAll) return y;
+        if (ui.find != null) ui.find.parent(name);
+        int y0 = y, lx = x + 10 + INDENT * 2, lw = w - 20 - INDENT * 2;
+        int fw = dev.combatdata.client.FightHud.previewWidth(ui.font, l) + 12, fh = dev.combatdata.client.FightHud.previewHeight(ui.font, l) + 8;
+        int fx = lx, fy = y + 6;
+        ui.g.enableScissor(Math.max(fx, x + 1), fy, Math.min(fx + fw, x + w - 1), fy + fh);
+        ui.g.fill(fx, fy, fx + fw, fy + fh / 2, 0xFF7EA6D6);
+        ui.g.fill(fx, fy + fh / 2, fx + fw, fy + fh, 0xFF5D8C3A);
+        dev.combatdata.client.FightHud.preview(ui.g, ui.font, fx + 6, fy + 4, l);
+        ui.g.disableScissor();
+        y = fy + fh + 6;
+        ui.g.fill(x + 8 + INDENT * 2, y - 1, x + w - 8, y, Theme.BORDER);
+
+        ui.text(t("Что показывать", "What to show"), lx, y + 8, Theme.TEXT);
+        Flow fl = new Flow(lx, y + 22, lw);
+        chip(ui, fl, t("Ник и время", "Name and time"), l.fsTitle, v -> l.fsTitle = v);
+        chip(ui, fl, t("Попадания", "Hits"), l.fsHits, v -> l.fsHits = v);
+        chip(ui, fl, "Jump reset", l.fsJr, v -> l.fsJr = v);
+        chip(ui, fl, t("Комбо", "Combo"), l.fsCombo, v -> l.fsCombo = v);
+        chip(ui, fl, t("Размены", "Trades"), l.fsTrades, v -> l.fsTrades = v);
+        chip(ui, fl, t("Дистанция", "Reach"), l.fsReach, v -> l.fsReach = v);
+        chip(ui, fl, "3 block hit", l.fsThreeBlock, v -> l.fsThreeBlock = v);
+        chip(ui, fl, t("Получено ударов", "Hits taken"), l.fsTaken, v -> l.fsTaken = v);
+        y = fl.bottom() + 2;
+        ui.g.fill(x + 8 + INDENT * 2, y - 1, x + w - 8, y, Theme.BORDER);
+
+        y = choice(ui, x, y, w, t("Вид", "Layout"), new String[]{t("Две строки", "Two lines"), t("Одна строка", "One line"), t("Столбиком", "Column")},
+                l.fsLayout, v -> l.fsLayout = v);
+        y = flag(ui, x, y, w, t("Цветные цифры", "Colored numbers"), t("Зелёный хорошо, жёлтый средне, красный плохо", "Green good, yellow fair, red bad"),
+                l.fsColors, v -> l.fsColors = v);
+        y = stepRow(ui, x, y, w, t("Непрозрачность фона", "Background opacity"), null, l.fsBgOpacity + "%",
+                () -> l.fsBgOpacity -= 10, () -> l.fsBgOpacity += 10);
+        y = stepRow(ui, x, y, w, t("Масштаб", "Scale"), null, String.format(Locale.ROOT, "%.2fx", l.fsScale),
+                () -> l.fsScale -= 0.25, () -> l.fsScale += 0.25);
+        y = stepRow(ui, x, y, w, t("Показывается", "Shown for"), null, l.fsShowSec + t(" с", " s"), () -> l.fsShowSec--, () -> l.fsShowSec++);
+        y = choice(ui, x, y, w, t("Положение", "Position"), new String[]{t("Рядом с REC", "Next to REC"), t("Своё", "Custom")},
+                l.fsNearRec ? 0 : 1, v -> l.fsNearRec = v == 0);
+        if (!l.fsNearRec) y = place(ui, x, y, w, t("Своё место", "Custom place"),
+                () -> Minecraft.getInstance().setScreen(new HudPositionScreen(menu, true, null)));
+        ui.text(Draw.ellipsize(ui.font, t("Когда бой считается оконченным: Настройки → Основные (" + l.fsDelaySec + " с без ударов)",
+                "When a fight counts as over: Settings → General (" + l.fsDelaySec + " s without hits)"), lw), lx, y + 6, Theme.DIM);
+        y += 18;
+        ui.g.fill(x + 12, y0 + 3, x + 14, y - 4, Theme.alpha(Theme.ACCENT, 0x90));
+        return y;
+    }
+
+    /** "Move" button that opens the drag screen; the place is saved there. */
+    private int place(Ui ui, int x, int y, int w, String label, Runnable open) {
+        row(ui, x, y, w, 26, INDENT * 2, label, null, Theme.TEXT);
+        String bl = t("Переместить", "Move");
+        int bw = ui.buttonWidth(bl);
+        ui.button(x + w - 10 - bw, y + 5, bw, 16, bl, Ui.Kind.SECONDARY, true, open);
+        return y + 26;
     }
 
     /** Lays out everything for the search index, with the options of switched-off indicators too. */
@@ -187,7 +312,10 @@ final class IndicatorsTab implements Tab {
                 ui.text(Draw.ellipsize(ui.font, t("Окно " + p.lowerMs() + "–" + p.upperMs() + " мс после удара: Настройки → Дополнительно",
                         "Window " + p.lowerMs() + "–" + p.upperMs() + " ms after the hit: Settings → Advanced"), w - 20 - INDENT * 2),
                         x + 10 + INDENT * 2, y + 6, Theme.DIM);
-                y += 18;
+                ui.text(Draw.ellipsize(ui.font, t("Без подписей промах коротко: -20 мс значит рано, +35 мс поздно",
+                        "Without captions a miss is short: -20 ms means early, +35 ms late"), w - 20 - INDENT * 2),
+                        x + 10 + INDENT * 2, y + 18, Theme.DIM);
+                y += 30;
             }
             case THREE_BLOCK -> {
                 y = flag(ui, x, y, w, t("Дистанция у противника", "Distance on their screen"), t("Насколько вы были дальше его досягаемости", "How far beyond their reach you were"),

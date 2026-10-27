@@ -218,6 +218,42 @@ public final class Settings {
         customThemes = c.customThemes;
     }
 
+    /**
+     * REC label and fight summary look and place. They are edited in the Indicators tab and apply at once, so the
+     * Settings draft takes them from the live settings instead of holding its own copy. fsDelaySec stays in the draft:
+     * it also drives autosave.
+     */
+    public void copyHudFrom(Settings o) {
+        hudVisible = o.hudVisible;
+        hudX = o.hudX;
+        hudY = o.hudY;
+        hudScale = o.hudScale;
+        hudBgOpacity = o.hudBgOpacity;
+        hudFormat = o.hudFormat;
+        hudTextColor = o.hudTextColor;
+        hudShowDot = o.hudShowDot;
+        hudBlink = o.hudBlink;
+        hudShadow = o.hudShadow;
+        hudHideWhenPaused = o.hudHideWhenPaused;
+        fightSummary = o.fightSummary;
+        fsTitle = o.fsTitle;
+        fsHits = o.fsHits;
+        fsJr = o.fsJr;
+        fsCombo = o.fsCombo;
+        fsTrades = o.fsTrades;
+        fsReach = o.fsReach;
+        fsThreeBlock = o.fsThreeBlock;
+        fsTaken = o.fsTaken;
+        fsColors = o.fsColors;
+        fsLayout = o.fsLayout;
+        fsBgOpacity = o.fsBgOpacity;
+        fsShowSec = o.fsShowSec;
+        fsScale = o.fsScale;
+        fsNearRec = o.fsNearRec;
+        fsX = o.fsX;
+        fsY = o.fsY;
+    }
+
     /** Positions and indicators are excluded: they apply immediately. */
     public int diffCount(Settings o) {
         Map<String, Object> a = toMap(), b = o.toMap();
