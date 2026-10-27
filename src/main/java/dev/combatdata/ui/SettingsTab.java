@@ -1,7 +1,6 @@
 package dev.combatdata.ui;
 
 import dev.combatdata.CombatDataClient;
-import dev.combatdata.client.HudPositionScreen;
 import dev.combatdata.client.Recordings;
 import dev.combatdata.core.Calibration;
 import dev.combatdata.core.Cdrec;
@@ -14,21 +13,22 @@ import static dev.combatdata.core.Lang.t;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
-/** Changes go to a draft and apply on "Apply"; HUD position changes apply immediately. */
+/** Changes go to a draft and apply on "Apply". The REC label and fight summary live in the Indicators tab and apply at once. */
 final class SettingsTab implements Tab {
     private static String[] sections() {
         return dev.combatdata.core.Lang.english()
-                ? new String[]{"General", "HUD", "Stat filters", "Appearance", "Advanced"}
-                : new String[]{"Основные", "HUD", "Фильтры статистики", "Оформление", "Дополнительно"};
+                ? new String[]{"General", "Stat filters", "Appearance", "Advanced"}
+                : new String[]{"Основные", "Фильтры статистики", "Оформление", "Дополнительно"};
     }
 
     private static String[] sectionsShort() {
         return dev.combatdata.core.Lang.english()
-                ? new String[]{"General", "HUD", "Filters", "Look", "Advanced"}
-                : new String[]{"Основные", "HUD", "Фильтры", "Вид", "Дополн."};
+                ? new String[]{"General", "Filters", "Look", "Advanced"}
+                : new String[]{"Основные", "Фильтры", "Вид", "Дополн."};
     }
+
+    private static final int APPEARANCE = 2;
     private static final int[] PRESETS = {5, 10, 20, 30, 60};
     private static final Settings DEF = new Settings();
     private final MenuScreen menu;
@@ -58,6 +58,7 @@ final class SettingsTab implements Tab {
     void apply() {
         if (draft == null) return;
         boolean limits = draft.storageLimitMb != live().storageLimitMb || draft.autoDeleteDays != live().autoDeleteDays;
+        draft.copyHudFrom(live());
         live().copyFrom(draft);
         CombatDataClient.saveSettings();
         CombatDataClient.applyLanguage(Minecraft.getInstance());
@@ -75,10 +76,7 @@ final class SettingsTab implements Tab {
     @Override
     public void render(Ui ui, int x, int y, int w, int h) {
         if (draft == null) draft = live().copy();
-        draft.hudX = live().hudX;
-        draft.hudY = live().hudY;
-        draft.fsX = live().fsX;
-        draft.fsY = live().fsY;
+        draft.copyHudFrom(live());
         ui.segmented(x, y, ui.segmentedWidth(sections()) <= w ? sections() : sectionsShort(), section, i -> {
             section = i;
             storageList = null;
@@ -122,9 +120,8 @@ final class SettingsTab implements Tab {
     private int content(Ui ui, int x, int top, int w, int s) {
         return switch (s) {
             case 0 -> keys(ui, x, heading(ui, x, whatToRecord(ui, x, recording(ui, x, top, w), w), w, t("Язык и клавиши", "Language and keys")), w);
-            case 1 -> hud(ui, x, top, w);
-            case 2 -> filters(ui, x, top, w);
-            case 3 -> appearance(ui, x, top, w);
+            case 1 -> filters(ui, x, top, w);
+            case APPEARANCE -> appearance(ui, x, top, w);
             default -> advanced(ui, x, top, w);
         };
     }
@@ -214,6 +211,17 @@ final class SettingsTab implements Tab {
                 t("Через " + draft.fsDelaySec + " с после боя, от " + draft.statMinFightHits + " ударов",
                         draft.fsDelaySec + " s after a fight, from " + draft.statMinFightHits + " hits"),
                 draft.autoSave, l.autoSave, DEF.autoSave, v -> draft.autoSave = v);
+        row(ui, x, y, w, 30, t("Бой окончен через", "Fight ends after"), t("Без ударов; для автосохранения и итога боя", "No hits; for autosave and the fight summary"),
+                draft.fsDelaySec != l.fsDelaySec);
+        ui.stepper(right - sw, y + 7, sw, draft.fsDelaySec + t(" с", " s"), () -> {
+            draft.fsDelaySec -= draft.fsDelaySec > 10 ? 5 : 1;
+            draft.clamp();
+        }, () -> {
+            draft.fsDelaySec += draft.fsDelaySec >= 10 ? 5 : 1;
+            draft.clamp();
+        });
+        reset(ui, right - sw - 4, y + 8, draft.fsDelaySec != DEF.fsDelaySec, DEF.fsDelaySec + t(" с", " s"), () -> draft.fsDelaySec = DEF.fsDelaySec);
+        y += 30;
         y = flag(ui, x, y, w, t("Звук при сохранении", "Sound on save"), t("Высокий звук: сохранено, низкий: не удалось", "High: saved, low: failed"), draft.soundOnSave,
                 l.soundOnSave, DEF.soundOnSave, v -> draft.soundOnSave = v);
         row(ui, x, y, w, 26, t("Громкость звука", "Sound volume"), null, draft.soundVolume != l.soundVolume);
@@ -348,14 +356,6 @@ final class SettingsTab implements Tab {
         draft.clamp();
     }
 
-    private static String[] formats() {
-        return new String[]{t("Полный", "Full"), t("Время", "Time"), t("Кружок", "Dot")};
-    }
-
-    private static String[] textColors() {
-        return new String[]{t("Состояние", "State"), t("Белый", "White"), t("Серый", "Grey")};
-    }
-
     private int flag(Ui ui, int x, int y, int w, String label, String hint, boolean value, boolean liveV, boolean def,
                      java.util.function.Consumer<Boolean> set) {
         int h = hint == null ? 26 : 30, right = x + w - 10;
@@ -372,171 +372,6 @@ final class SettingsTab implements Tab {
         ui.segmented(right - sw, y + 4, items, value, set);
         reset(ui, right - sw - 4, y + 6, value != def, items[def], () -> set.accept(def));
         return y + 26;
-    }
-
-    private int hud(Ui ui, int x, int y, int w) {
-        Settings l = live();
-        int right = x + w - 10;
-        row(ui, x, y, w, 30, t("Предпросмотр", "Preview"), t("Так надпись будет выглядеть после «Применить»", "How the label will look after Apply"), false);
-        int pw = 150, ph = 22, pxl = right - pw, pyl = y + 4;
-        ui.g.fill(pxl, pyl, pxl + pw, pyl + ph / 2, 0xFF7EA6D6);
-        ui.g.fill(pxl, pyl + ph / 2, pxl + pw, pyl + ph, 0xFF5D8C3A);
-        dev.combatdata.client.RecHud.preview(ui.g, ui.font, pxl + 6, pyl + (ph - 13) / 2, draft);
-        y += 30;
-        row(ui, x, y, w, 26, t("Показывать надпись записи", "Show recording label"), null, draft.hudVisible != l.hudVisible);
-        ui.toggle(right - 20, y + 7, draft.hudVisible, v -> draft.hudVisible = v);
-        reset(ui, right - 26, y + 6, draft.hudVisible != DEF.hudVisible, onOff(DEF.hudVisible),
-                () -> draft.hudVisible = DEF.hudVisible);
-        y += 26;
-        row(ui, x, y, w, 26, t("Масштаб надписи", "Label scale"), null, draft.hudScale != l.hudScale);
-        ui.stepper(right - 72, y + 5, 72, String.format(Locale.ROOT, "%.2fx", draft.hudScale), () -> {
-            draft.hudScale -= 0.25;
-            draft.clamp();
-        }, () -> {
-            draft.hudScale += 0.25;
-            draft.clamp();
-        });
-        reset(ui, right - 76, y + 6, draft.hudScale != DEF.hudScale, String.format(Locale.ROOT, "%.2fx", DEF.hudScale),
-                () -> draft.hudScale = DEF.hudScale);
-        y += 26;
-        row(ui, x, y, w, 26, t("Непрозрачность фона", "Background opacity"), null, draft.hudBgOpacity != l.hudBgOpacity);
-        ui.stepper(right - 72, y + 5, 72, draft.hudBgOpacity + "%", () -> {
-            draft.hudBgOpacity -= 10;
-            draft.clamp();
-        }, () -> {
-            draft.hudBgOpacity += 10;
-            draft.clamp();
-        });
-        reset(ui, right - 76, y + 6, draft.hudBgOpacity != DEF.hudBgOpacity, DEF.hudBgOpacity + "%",
-                () -> draft.hudBgOpacity = DEF.hudBgOpacity);
-        y += 26;
-        y = choice(ui, x, y, w, t("Формат", "Format"), formats(), draft.hudFormat, l.hudFormat, DEF.hudFormat, v -> draft.hudFormat = v);
-        y = choice(ui, x, y, w, t("Цвет текста", "Text color"), textColors(), draft.hudTextColor, l.hudTextColor, DEF.hudTextColor,
-                v -> draft.hudTextColor = v);
-        y = flag(ui, x, y, w, t("Кружок", "Dot"), null, draft.hudShowDot, l.hudShowDot, DEF.hudShowDot, v -> draft.hudShowDot = v);
-        y = flag(ui, x, y, w, t("Мигание кружка", "Blinking dot"), null, draft.hudBlink, l.hudBlink, DEF.hudBlink, v -> draft.hudBlink = v);
-        y = flag(ui, x, y, w, t("Тень у текста", "Text shadow"), null, draft.hudShadow, l.hudShadow, DEF.hudShadow, v -> draft.hudShadow = v);
-        y = flag(ui, x, y, w, t("Скрывать на паузе", "Hide when paused"), t("Вне мира и в паузе одиночной игры", "Outside a world and in singleplayer pause"), draft.hudHideWhenPaused,
-                l.hudHideWhenPaused, DEF.hudHideWhenPaused, v -> draft.hudHideWhenPaused = v);
-        row(ui, x, y, w, 30, t("Положение надписи", "Label position"), t("Меняется сразу, без «Применить»", "Changes immediately, no Apply needed"), false);
-        int bw = ui.buttonWidth(t("Переместить", "Move"));
-        ui.button(right - bw, y + 7, bw, 16, t("Переместить", "Move"), Ui.Kind.SECONDARY, true,
-                () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu)));
-        // Position bypasses the draft, so resetting it saves immediately.
-        reset(ui, right - bw - 4, y + 8, l.hudX != DEF.hudX || l.hudY != DEF.hudY, t("левый верхний угол", "top left corner"), () -> {
-            l.hudX = DEF.hudX;
-            l.hudY = DEF.hudY;
-            CombatDataClient.saveSettings();
-        });
-        y += 30;
-        return fightSummary(ui, x, y, w);
-    }
-
-    private static String[] fsLayouts() {
-        return new String[]{t("Две строки", "Two lines"), t("Одна строка", "One line"), t("Столбиком", "Column")};
-    }
-
-    private int fightSummary(Ui ui, int x, int y, int w) {
-        Settings l = live();
-        int right = x + w - 10, sw = 72;
-        y = heading(ui, x, y, w, t("Итог боя", "Fight summary"));
-        String label = t("Показывать итог боя", "Show fight summary");
-        y = flag(ui, x, y, w, label, t("После боя на несколько секунд", "For a few seconds after a fight"),
-                draft.fightSummary, l.fightSummary, DEF.fightSummary, v -> draft.fightSummary = v);
-        labelInfo(ui, x, y - 30, 30, label, true, Help.fightSummary());
-        int fw = dev.combatdata.client.FightHud.previewWidth(ui.font, draft) + 12;
-        int fh = dev.combatdata.client.FightHud.previewHeight(ui.font, draft) + 8;
-        boolean wide = fw <= w - 80;
-        int rh = wide ? Math.max(26, fh + 8) : fh + 22, fx = wide ? right - fw : x + 10, fy = wide ? y + (rh - fh) / 2 : y + 18;
-        if (wide) row(ui, x, y, w, rh, t("Пример", "Example"), null, false);
-        else {
-            ui.text(t("Пример", "Example"), x + 10, y + 5, Theme.TEXT);
-            ui.g.fill(x + 8, y + rh - 1, x + w - 8, y + rh, Theme.BORDER);
-        }
-        ui.g.enableScissor(Math.max(fx, x + 1), fy, Math.min(fx + fw, x + w - 1), fy + fh);
-        ui.g.fill(fx, fy, fx + fw, fy + fh / 2, 0xFF7EA6D6);
-        ui.g.fill(fx, fy + fh / 2, fx + fw, fy + fh, 0xFF5D8C3A);
-        dev.combatdata.client.FightHud.preview(ui.g, ui.font, fx + 6, fy + 4, draft);
-        ui.g.disableScissor();
-        y += rh;
-
-        boolean partsChanged = draft.fsTitle != l.fsTitle || draft.fsHits != l.fsHits || draft.fsJr != l.fsJr || draft.fsCombo != l.fsCombo
-                || draft.fsTrades != l.fsTrades || draft.fsReach != l.fsReach || draft.fsThreeBlock != l.fsThreeBlock || draft.fsTaken != l.fsTaken;
-        String pl = t("Что показывать", "What to show");
-        ui.text(pl, x + 10, y + 8, Theme.TEXT);
-        if (partsChanged) Draw.circle(ui.g, x + 10 + ui.font.width(pl) + 5, y + 9, 5, Theme.AMBER);
-        Flow fl = new Flow(x + 10, y + 22, w - 20);
-        fsChip(ui, fl, t("Ник и время", "Name and time"), draft.fsTitle, v -> draft.fsTitle = v);
-        fsChip(ui, fl, t("Попадания", "Hits"), draft.fsHits, v -> draft.fsHits = v);
-        fsChip(ui, fl, "Jump reset", draft.fsJr, v -> draft.fsJr = v);
-        fsChip(ui, fl, t("Комбо", "Combo"), draft.fsCombo, v -> draft.fsCombo = v);
-        fsChip(ui, fl, t("Размены", "Trades"), draft.fsTrades, v -> draft.fsTrades = v);
-        fsChip(ui, fl, t("Дистанция", "Reach"), draft.fsReach, v -> draft.fsReach = v);
-        fsChip(ui, fl, "3 block hit", draft.fsThreeBlock, v -> draft.fsThreeBlock = v);
-        fsChip(ui, fl, t("Получено ударов", "Hits taken"), draft.fsTaken, v -> draft.fsTaken = v);
-        y = fl.bottom() + 2;
-        ui.g.fill(x + 8, y - 1, x + w - 8, y, Theme.BORDER);
-
-        y = choice(ui, x, y, w, t("Вид", "Layout"), fsLayouts(), draft.fsLayout, l.fsLayout, DEF.fsLayout, v -> draft.fsLayout = v);
-        y = flag(ui, x, y, w, t("Цветные цифры", "Colored numbers"), t("Зелёный хорошо, жёлтый средне, красный плохо", "Green good, yellow fair, red bad"),
-                draft.fsColors, l.fsColors, DEF.fsColors, v -> draft.fsColors = v);
-        row(ui, x, y, w, 26, t("Непрозрачность фона", "Background opacity"), null, draft.fsBgOpacity != l.fsBgOpacity);
-        ui.stepper(right - sw, y + 5, sw, draft.fsBgOpacity + "%", () -> {
-            draft.fsBgOpacity -= 10;
-            draft.clamp();
-        }, () -> {
-            draft.fsBgOpacity += 10;
-            draft.clamp();
-        });
-        reset(ui, right - sw - 4, y + 6, draft.fsBgOpacity != DEF.fsBgOpacity, DEF.fsBgOpacity + "%", () -> draft.fsBgOpacity = DEF.fsBgOpacity);
-        y += 26;
-        row(ui, x, y, w, 26, t("Масштаб", "Scale"), null, draft.fsScale != l.fsScale);
-        ui.stepper(right - sw, y + 5, sw, String.format(Locale.ROOT, "%.2fx", draft.fsScale), () -> {
-            draft.fsScale -= 0.25;
-            draft.clamp();
-        }, () -> {
-            draft.fsScale += 0.25;
-            draft.clamp();
-        });
-        reset(ui, right - sw - 4, y + 6, draft.fsScale != DEF.fsScale, String.format(Locale.ROOT, "%.2fx", DEF.fsScale), () -> draft.fsScale = DEF.fsScale);
-        y += 26;
-        row(ui, x, y, w, 30, t("Бой окончен через", "Fight ends after"), t("Без ударов; для итога и автосохранения", "No hits; for summary and autosave"), draft.fsDelaySec != l.fsDelaySec);
-        ui.stepper(right - sw, y + 7, sw, draft.fsDelaySec + t(" с", " s"), () -> {
-            draft.fsDelaySec -= draft.fsDelaySec > 10 ? 5 : 1;
-            draft.clamp();
-        }, () -> {
-            draft.fsDelaySec += draft.fsDelaySec >= 10 ? 5 : 1;
-            draft.clamp();
-        });
-        reset(ui, right - sw - 4, y + 8, draft.fsDelaySec != DEF.fsDelaySec, DEF.fsDelaySec + t(" с", " s"), () -> draft.fsDelaySec = DEF.fsDelaySec);
-        y += 30;
-        row(ui, x, y, w, 26, t("Показывается", "Shown for"), null, draft.fsShowSec != l.fsShowSec);
-        ui.stepper(right - sw, y + 5, sw, draft.fsShowSec + t(" с", " s"), () -> {
-            draft.fsShowSec--;
-            draft.clamp();
-        }, () -> {
-            draft.fsShowSec++;
-            draft.clamp();
-        });
-        reset(ui, right - sw - 4, y + 6, draft.fsShowSec != DEF.fsShowSec, DEF.fsShowSec + t(" с", " s"), () -> draft.fsShowSec = DEF.fsShowSec);
-        y += 26;
-        y = choice(ui, x, y, w, t("Положение", "Position"), new String[]{t("Рядом с REC", "Next to REC"), t("Своё", "Custom")},
-                draft.fsNearRec ? 0 : 1, l.fsNearRec ? 0 : 1, DEF.fsNearRec ? 0 : 1, v -> draft.fsNearRec = v == 0);
-        if (!draft.fsNearRec) {
-            row(ui, x, y, w, 30, t("Своё место", "Custom place"), t("Меняется сразу, без «Применить»", "Changes immediately, no Apply needed"), false);
-            int bw = ui.buttonWidth(t("Переместить", "Move"));
-            ui.button(right - bw, y + 7, bw, 16, t("Переместить", "Move"), Ui.Kind.SECONDARY, true,
-                    () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu, true, draft)));
-            y += 30;
-        }
-        return y;
-    }
-
-    private static void fsChip(Ui ui, Flow fl, String label, boolean on, java.util.function.Consumer<Boolean> set) {
-        int cw = ui.font.width(label) + 12;
-        int[] p = fl.place(cw, false);
-        ui.mark(label, null, p[0] - 3, p[1], cw + 6, 18);
-        ui.chip(p[0], p[1] + 3, cw, label, on, () -> set.accept(!on));
     }
 
 
@@ -704,7 +539,7 @@ final class SettingsTab implements Tab {
 
     @Override
     public boolean pressed(double mx, double my) {
-        if (section != 3 || mx < panelX || mx >= panelX + panelW || my < panelY || my >= panelY + panelH) return false;
+        if (section != APPEARANCE || mx < panelX || mx >= panelX + panelW || my < panelY || my >= panelY + panelH) return false;
         for (int i = 0; i < sliders.size(); i++) {
             int[] s = sliders.get(i);
             if (mx >= s[0] - 3 && mx < s[0] + s[2] + 3 && my >= s[1] && my < s[1] + s[3]) {

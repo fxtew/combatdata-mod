@@ -8,6 +8,8 @@ statistics and charts in game. It only observes: nothing is sent over the networ
 - Rolling buffer (1–120 min) with a REC indicator on the HUD; F9 saves the buffer, and fights can be saved
   automatically when they end (off by default).
 - Hit tracking: confirmed hits, misses with their cause, reach, aim offset, crits and sweeps.
+- Aim breakdown: where the crosshair was on every swing including misses, which way misses go, accuracy against
+  strafing and jumping opponents, on fast flicks, in the air and by distance, with concrete tips.
 - Jump reset, W-tap, combos, trades and 3 block hit analysis.
 - Charts, per-fight breakdown, top-down fight replay and progress across recordings.
 - Optional HUD indicators, each movable and resizable: exact health, reach of the last hit, combo, ping,
@@ -25,6 +27,7 @@ statistics and charts in game. It only observes: nothing is sent over the networ
 | unbound | Add a marker, reset the buffer, show or hide indicators |
 
 Commands: `/combatdata open`, `/combatdata save`, `/combatdata marker`, `/combatdata reset confirm`.
+With [Mod Menu](https://modrinth.com/mod/modmenu) installed, the menu also opens from the mod list.
 
 ## Building
 

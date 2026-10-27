@@ -40,6 +40,10 @@ public final class RecHud {
         return raw;
     }
 
+    public static int previewWidth(Font font, Settings s) {
+        return rawWidth(font, s, label(s));
+    }
+
     static Label label(Settings s) {
         long saved = Recorder.lastSavedWall(), sinceSave = System.currentTimeMillis() - saved;
         if (saved > 0 && sinceSave < 2500) return new Label(Recorder.lastSavedAuto() ? t("Бой сохранён", "Fight saved")
