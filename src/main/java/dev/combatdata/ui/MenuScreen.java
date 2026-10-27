@@ -53,6 +53,7 @@ public final class MenuScreen extends Screen {
     private float frameDelta;
     private GuiGraphicsExtractor currentG;
     private boolean lastDouble;
+    private int lastMods;
     private boolean mouseCaptured;
     private final Find find = new Find();
     private EditBox findBox;
@@ -178,6 +179,14 @@ public final class MenuScreen extends Screen {
 
     boolean lastDoubleClick() {
         return lastDouble;
+    }
+
+    boolean lastCtrl() {
+        return (lastMods & (GLFW.GLFW_MOD_CONTROL | GLFW.GLFW_MOD_SUPER)) != 0;
+    }
+
+    boolean lastShift() {
+        return (lastMods & GLFW.GLFW_MOD_SHIFT) != 0;
     }
 
     void openModal(Modal m) {
@@ -518,6 +527,7 @@ public final class MenuScreen extends Screen {
         if (modal == null && (getFocused() == searchBox || getFocused() == oppSearch || getFocused() == findBox)) setFocused(null);
         if (event.button() != 0) return super.mouseClicked(event, doubleClick);
         lastDouble = doubleClick;
+        lastMods = event.modifiers();
         int active = modal != null ? 1 : 0;
         for (int i = targets.size() - 1; i >= 0; i--) {
             Ui.Target t = targets.get(i);
@@ -590,6 +600,7 @@ public final class MenuScreen extends Screen {
             setFocused(null);
             return;
         }
+        if (tab == TabId.RECORDINGS && recordings.cancelSelection()) return;
         if (settingsTab.dirty()) {
             openModal(new Modal(t("Настройки не применены", "Settings not applied"),
                     List.of(t("Есть изменения, которые не применены.", "There are changes that have not been applied.")), null, List.of(
