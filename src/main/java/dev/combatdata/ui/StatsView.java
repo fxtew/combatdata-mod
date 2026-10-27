@@ -1273,7 +1273,7 @@ final class StatsView {
     private static final double HEAD_V = 24.0 / 32, LEGS_V = 12.0 / 32;
 
     /** Aim map extents around the target, blocks: half the width, and from below the feet to above the head. */
-    private static final double MAP_HALF_W = 1.0, MAP_BELOW = 0.4, MAP_ABOVE = 2.2;
+    private static final double MAP_HALF_W = 0.75, MAP_BELOW = 0.25, MAP_ABOVE = 2.1;
 
     private int aimTab(Ui ui, int x, int y, int w) {
         AimReport.Result r = aim;
@@ -1298,8 +1298,9 @@ final class StatsView {
         y = aimTips(ui, x, y, w, r);
 
         boolean narrow = w < 360;
-        int sh = narrow ? 120 : 150;
-        double k = sh / (MAP_BELOW + MAP_ABOVE);
+        // The silhouette keeps a fixed height; the map adds only a thin margin around it.
+        double k = (narrow ? 120 : 150) / AimReport.HEIGHT;
+        int sh = (int) Math.round((MAP_BELOW + MAP_ABOVE) * k);
         // The map widens to fit its legend; extra width just shows a little more around the target.
         int mapW = Math.max((int) Math.round(2 * MAP_HALF_W * k), legendWidth(ui)), cardW = mapW + 12, cardH = sh + 34;
         aimMap(ui, x, y, cardW, sh, k, r);
@@ -1480,32 +1481,46 @@ final class StatsView {
                 boolean hit = s.kind() == AimReport.Kind.HIT;
                 if (hit != (pass == 1)) continue;
                 int px = ax + (int) Math.round(s.x() * hw), py = feet - (int) Math.round(s.y() * bodyH);
-                boolean out = px < left + 1 || px > left + mapW - 2 || py < top + 1 || py > top + sh - 2;
-                px = Math.max(left + 1, Math.min(left + mapW - 2, px));
-                py = Math.max(top + 1, Math.min(top + sh - 2, py));
+                boolean outX = px < left + 2 || px > left + mapW - 3, outY = py < top + 2 || py > top + sh - 3;
+                px = Math.max(left + 2, Math.min(left + mapW - 3, px));
+                py = Math.max(top + 2, Math.min(top + sh - 3, py));
                 int color = switch (s.kind()) {
                     case HIT -> ThreeBlockHit.is(s.a(), interp) ? Theme.AMBER : Theme.GREEN;
                     case MISS -> Theme.RED;
-                    case OUT_OF_RANGE -> Theme.BLUE;
+                    case OUT_OF_RANGE -> Theme.TEXT_STRONG;
                 };
-                Draw.circle(g, px - 1, py - 1, 3, Theme.alpha(color, out ? 0x70 : 0xC0));
+                if (outX || outY) {
+                    // Far off the target: a short mark on the map edge, pointing the way the crosshair went.
+                    int ex = outX ? (px < ax ? left : left + mapW - 2) : px - 2, ey = outY ? (py < feet ? top : top + sh - 2) : py - 2;
+                    g.fill(ex, ey, ex + (outX ? 2 : 5), ey + (outY ? 2 : 5), Theme.alpha(color, 0x90));
+                } else if (s.kind() == AimReport.Kind.OUT_OF_RANGE) ring(g, px, py, Theme.alpha(color, 0xD0));
+                else Draw.circle(g, px - 1, py - 1, 3, Theme.alpha(color, 0xC0));
                 if (ui.hover(px - 2, py - 2, 5, 5)) hovered = s;
             }
         }
         if (hovered != null) {
-            int px = Math.max(left + 1, Math.min(left + mapW - 2, ax + (int) Math.round(hovered.x() * hw)));
-            int py = Math.max(top + 1, Math.min(top + sh - 2, feet - (int) Math.round(hovered.y() * bodyH)));
+            int px = Math.max(left + 2, Math.min(left + mapW - 3, ax + (int) Math.round(hovered.x() * hw)));
+            int py = Math.max(top + 2, Math.min(top + sh - 3, feet - (int) Math.round(hovered.y() * bodyH)));
             g.renderOutline(px - 3, py - 3, 7, 7, Theme.TEXT_STRONG);
             ui.tip(shotText(hovered));
         }
         int ly = top + sh + 5, lx = left;
-        lx = legend(ui, lx, ly, Theme.GREEN, t("попал", "hit"));
-        lx = legend(ui, lx, ly, Theme.RED, t("мимо", "miss"));
-        legend(ui, lx, ly, Theme.BLUE, t("далеко", "far"));
+        lx = legend(ui, lx, ly, Theme.GREEN, t("попал", "hit"), false);
+        lx = legend(ui, lx, ly, Theme.RED, t("мимо", "miss"), false);
+        legend(ui, lx, ly, Theme.TEXT_STRONG, t("далеко", "far"), true);
     }
 
-    private static int legend(Ui ui, int x, int y, int color, String name) {
-        Draw.circle(ui.g, x, y + 2, 4, color);
+    /** A 5x5 ring from plain fills: out-of-range swings, where the aim was fine and only the distance was not. */
+    private static void ring(net.minecraft.client.gui.GuiGraphics g, int cx, int cy, int color) {
+        g.fill(cx - 1, cy - 2, cx + 2, cy - 1, color);
+        g.fill(cx - 1, cy + 2, cx + 2, cy + 3, color);
+        g.fill(cx - 2, cy - 1, cx - 1, cy + 2, color);
+        g.fill(cx + 2, cy - 1, cx + 3, cy + 2, color);
+    }
+
+    private static int legend(Ui ui, int x, int y, int color, String name, boolean ring) {
+        if (ring) ring(ui.g, x + 2, y + 4, color);
+        else Draw.circle(ui.g, x, y + 2, 4, color);
         ui.text(name, x + 6, y, Theme.MUTED);
         return x + 6 + ui.font.width(name) + 6;
     }
