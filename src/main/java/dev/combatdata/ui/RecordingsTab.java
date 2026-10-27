@@ -4,6 +4,7 @@ import dev.combatdata.CombatDataClient;
 import dev.combatdata.client.Recorder;
 import dev.combatdata.client.Recordings;
 import dev.combatdata.core.Cdrec;
+import dev.combatdata.core.Lang;
 import dev.combatdata.core.Recording;
 import dev.combatdata.core.RecordingQuery;
 import net.minecraft.util.Util;
@@ -13,7 +14,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 final class RecordingsTab implements Tab {
     private static final int ROW = 24;
@@ -45,6 +49,10 @@ final class RecordingsTab implements Tab {
     private int statusColor = Theme.MUTED;
     private boolean sortOpen;
     private int listX, listY, listW, listH;
+    /** Recordings ticked for a group delete; selectMode shows the boxes even before the first tick. */
+    private final Set<Path> marked = new LinkedHashSet<>();
+    private boolean selectMode;
+    private Path anchor;
 
     RecordingsTab(MenuScreen menu) {
         this.menu = menu;
@@ -65,6 +73,9 @@ final class RecordingsTab implements Tab {
             loading = false;
             entries = list;
             if (selected != null && entries.stream().noneMatch(e -> e.file().equals(selected))) selected = null;
+            Set<Path> present = new HashSet<>();
+            for (Recordings.Entry e : entries) present.add(e.file());
+            marked.retainAll(present);
             rebuild();
         });
     }
@@ -156,7 +167,7 @@ final class RecordingsTab implements Tab {
             int ry = listY + i * ROW - (int) scroll;
             if (ry + ROW < listY || ry > listY + listH) continue;
             Recordings.Entry e = entries.get(shown.get(i));
-            boolean sel = e.file().equals(selected), hov = !sortOpen && ui.hover(listX, ry, listW, ROW);
+            boolean sel = selectMode ? marked.contains(e.file()) : e.file().equals(selected), hov = !sortOpen && ui.hover(listX, ry, listW, ROW);
             if (sel) Draw.round(ui.g, listX + 2, ry + 1, listW - 8, ROW - 2, Theme.R_CTRL, Theme.RAISED_HOVER);
             else if (hov) Draw.round(ui.g, listX + 2, ry + 1, listW - 8, ROW - 2, Theme.R_CTRL, Theme.ROW_HOVER);
             String when = Fmt.when(e), size = Fmt.size(e.size());
@@ -170,12 +181,11 @@ final class RecordingsTab implements Tab {
             if (lite != null) ui.textRight(lite, listX + listW - 12 - sizeW - 8, ry + 14, Theme.ACCENT);
             ui.textRight(size, listX + listW - 12, ry + 14, Theme.DIM);
             Path file = e.file();
-            ui.click(listX, ry, listW, ROW, () -> {
-                boolean open = menu.lastDoubleClick() && file.equals(selected);
-                selected = file;
-                liveSelected = false;
-                if (open) open();
-            });
+            ui.click(listX, ry, listW, ROW, () -> rowClicked(file));
+            if (selectMode) {
+                checkbox(ui, listX + 5, ry + 7, sel);
+                continue;
+            }
             boolean fav = Recordings.favorite(e);
             if (fav || sel || hov) star(ui, listX + 3, ry + 3, 14, 18, fav, false, () -> {
                 Recordings.setFavorite(e, !fav);
@@ -187,9 +197,14 @@ final class RecordingsTab implements Tab {
         ui.scrollbar(x + w - 5, listY + 2, listH - 4, scroll, listH, content);
 
         int fy = y + h - 16;
+        if (selectMode) {
+            selectionFooter(ui, x, fy, w, hint);
+            if (sortOpen) sortMenu(ui, sortX, y + 18, sortW);
+            return;
+        }
         Recordings.Entry sel = selectedEntry();
         bx = x + w;
-        String openL = t("Открыть", "Open"), renameL = t("Переименовать", "Rename"),
+        String openL = t("Открыть", "Open"), renameL = narrow ? t("Переим.", "Rename") : t("Переименовать", "Rename"),
                 deleteL = liveSelected ? t("Сбросить", "Reset") : t("Удалить", "Delete");
         bw = ui.buttonWidth(openL);
         bx -= bw;
@@ -201,6 +216,12 @@ final class RecordingsTab implements Tab {
         bx -= bw + 4;
         if (liveSelected) ui.button(bx, fy, bw, 16, deleteL, Ui.Kind.DANGER, true, () -> menu.confirmReset(null));
         else ui.button(bx, fy, bw, 16, deleteL, Ui.Kind.DANGER, sel != null, this::delete);
+        String pickL = t("Выбрать", "Select");
+        bw = ui.buttonWidth(pickL);
+        bx -= bw + 4;
+        ui.button(bx, fy, bw, 16, pickL, Ui.Kind.GHOST, !entries.isEmpty(), () -> startSelect(false));
+        if (hint == null && ui.hover(bx, fy, bw, 16)) hint = t("Отметить несколько записей, например чтобы удалить. Также Ctrl+клик или Shift+клик",
+                "Tick several recordings, for example to delete them. Also Ctrl+click or Shift+click");
         String left = hint != null ? hint : status;
         int leftColor = hint != null ? Theme.TEXT : statusColor;
         if (left == null) {
@@ -269,6 +290,7 @@ final class RecordingsTab implements Tab {
                 + (Recorder.hasCombatEvents() ? "" : t(" · боевых нет", " · no combat yet"));
         ui.text(Draw.ellipsize(ui.font, meta, w - 32), x + 20, y + 14, Theme.MUTED);
         ui.click(x, y, w, ROW, () -> {
+            if (selectMode) return;
             boolean open = menu.lastDoubleClick() && liveSelected;
             liveSelected = true;
             selected = null;
@@ -334,6 +356,131 @@ final class RecordingsTab implements Tab {
                     } catch (IOException ex) {
                         setStatus(t("Не удалось удалить: ", "Could not delete: ") + ex.getMessage(), Theme.RED);
                     }
+                    menu.closeModal();
+                    refresh();
+                }))));
+    }
+
+    /**
+     * Plain click selects and double click opens. Ctrl+click ticks one recording, Shift+click ticks the range from the
+     * last clicked row, both switch to selection; in selection a plain click ticks too.
+     */
+    private void rowClicked(Path file) {
+        boolean ctrl = menu.lastCtrl(), shift = menu.lastShift();
+        if (shift && anchor != null && shown.stream().anyMatch(i -> entries.get(i).file().equals(anchor))) {
+            startSelect(true);
+            int a = -1, b = -1;
+            for (int i = 0; i < shown.size(); i++) {
+                Path p = entries.get(shown.get(i)).file();
+                if (p.equals(anchor)) a = i;
+                if (p.equals(file)) b = i;
+            }
+            for (int i = Math.min(a, b); i <= Math.max(a, b); i++) marked.add(entries.get(shown.get(i)).file());
+            return;
+        }
+        if (ctrl || shift || selectMode) {
+            startSelect(true);
+            if (!marked.remove(file)) marked.add(file);
+            anchor = file;
+            return;
+        }
+        boolean open = menu.lastDoubleClick() && file.equals(selected);
+        selected = file;
+        anchor = file;
+        liveSelected = false;
+        if (open) open();
+    }
+
+    /** keepCurrent: the row selected before stays ticked, as in a file manager. */
+    private void startSelect(boolean keepCurrent) {
+        if (selectMode) return;
+        selectMode = true;
+        marked.clear();
+        if (keepCurrent && selected != null) marked.add(selected);
+        liveSelected = false;
+        sortOpen = false;
+    }
+
+    /** Esc leaves selection first; true if there was one to leave. */
+    boolean cancelSelection() {
+        if (!selectMode) return false;
+        selectMode = false;
+        marked.clear();
+        return true;
+    }
+
+    private static void checkbox(Ui ui, int x, int y, boolean on) {
+        Draw.roundBordered(ui.g, x, y, 10, 10, 2, on ? Theme.ACCENT : Theme.CTRL_HOVER, on ? Theme.ACCENT : Theme.RAISED);
+        if (on) ui.textCenter("✔", x + 5, y + 1, Theme.ON_ACCENT);
+    }
+
+    private void selectionFooter(Ui ui, int x, int fy, int w, String hint) {
+        List<Recordings.Entry> picked = markedEntries();
+        int bx = x + w;
+        String doneL = t("Готово", "Done"), delL = t("Удалить", "Delete") + (picked.isEmpty() ? "" : " (" + picked.size() + ")");
+        boolean allShown = !shown.isEmpty() && shown.stream().allMatch(i -> marked.contains(entries.get(i).file()));
+        String allL = allShown ? t("Снять все", "Clear all") : (shown.size() == entries.size() ? t("Выбрать все", "Select all") : t("Выбрать найденные", "Select found"));
+        int bw = ui.buttonWidth(doneL);
+        bx -= bw;
+        ui.button(bx, fy, bw, 16, doneL, Ui.Kind.SECONDARY, true, this::cancelSelection);
+        bw = ui.buttonWidth(delL);
+        bx -= bw + 4;
+        ui.button(bx, fy, bw, 16, delL, Ui.Kind.DANGER, !picked.isEmpty(), this::deleteMarked);
+        bw = ui.buttonWidth(allL);
+        bx -= bw + 4;
+        ui.button(bx, fy, bw, 16, allL, Ui.Kind.GHOST, !shown.isEmpty(), () -> {
+            if (allShown) for (int i : shown) marked.remove(entries.get(i).file());
+            else for (int i : shown) marked.add(entries.get(i).file());
+        });
+        String left;
+        int color = Theme.MUTED;
+        if (hint != null) {
+            left = hint;
+            color = Theme.TEXT;
+        } else if (picked.isEmpty()) {
+            left = t("Клик отмечает запись, Shift+клик диапазон, Esc выход", "Click ticks a recording, Shift+click a range, Esc leaves");
+            color = Theme.DIM;
+        } else {
+            left = t("Выбрано: ", "Selected: ") + picked.size() + " · " + Fmt.size(Recordings.totalBytes(picked));
+            color = Theme.TEXT;
+        }
+        ui.text(Draw.ellipsize(ui.font, left, bx - x - 8), x, Ui.textY(fy, 16), color);
+    }
+
+    private List<Recordings.Entry> markedEntries() {
+        List<Recordings.Entry> out = new ArrayList<>();
+        for (Recordings.Entry e : entries) if (marked.contains(e.file())) out.add(e);
+        return out;
+    }
+
+    private void deleteMarked() {
+        List<Recordings.Entry> picked = markedEntries();
+        if (picked.isEmpty()) return;
+        int n = picked.size(), favs = 0;
+        for (Recordings.Entry e : picked) if (Recordings.favorite(e)) favs++;
+        String count = Lang.english() ? n + (n == 1 ? " recording" : " recordings") : n + " " + Lang.plural(n, "запись", "записи", "записей");
+        List<String> lines = new ArrayList<>();
+        lines.add(t("Будет удалено: ", "To delete: ") + count + " (" + Fmt.size(Recordings.totalBytes(picked)) + ")");
+        if (favs > 0) lines.add(t("Из них в избранном: ", "Favorites among them: ") + favs);
+        lines.add(t("Файлы удаляются без возможности восстановления.", "The files are deleted permanently."));
+        menu.openModal(new Modal(t("Удалить выбранные записи?", "Delete the selected recordings?"), lines, null, List.of(
+                new Modal.Btn(t("Отмена", "Cancel"), Ui.Kind.SECONDARY, s -> menu.closeModal()),
+                new Modal.Btn(t("Удалить", "Delete"), Ui.Kind.DANGER, s -> {
+                    int done = 0;
+                    String error = null;
+                    for (Recordings.Entry e : picked) {
+                        try {
+                            Recordings.delete(e.file());
+                            menu.view.forget(e.file());
+                            done++;
+                        } catch (IOException ex) {
+                            error = ex.getMessage();
+                        }
+                    }
+                    if (error == null) setStatus(t("Удалено записей: ", "Recordings deleted: ") + done, Theme.MUTED);
+                    else setStatus(t("Удалено ", "Deleted ") + done + t(" из ", " of ") + picked.size() + t(", ошибка: ", ", error: ") + error, Theme.RED);
+                    if (selected != null && marked.contains(selected)) selected = null;
+                    cancelSelection();
                     menu.closeModal();
                     refresh();
                 }))));
