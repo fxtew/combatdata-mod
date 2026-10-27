@@ -18,17 +18,17 @@ import java.util.List;
 final class SettingsTab implements Tab {
     private static String[] sections() {
         return dev.combatdata.core.Lang.english()
-                ? new String[]{"General", "Stat filters", "Appearance", "Advanced"}
-                : new String[]{"Основные", "Фильтры статистики", "Оформление", "Дополнительно"};
+                ? new String[]{"General", "HUD", "Stat filters", "Appearance", "Advanced"}
+                : new String[]{"Основные", "HUD", "Фильтры статистики", "Оформление", "Дополнительно"};
     }
 
     private static String[] sectionsShort() {
         return dev.combatdata.core.Lang.english()
-                ? new String[]{"General", "Filters", "Look", "Advanced"}
-                : new String[]{"Основные", "Фильтры", "Вид", "Дополн."};
+                ? new String[]{"General", "HUD", "Filters", "Look", "Advanced"}
+                : new String[]{"Основные", "HUD", "Фильтры", "Вид", "Дополн."};
     }
 
-    private static final int APPEARANCE = 2;
+    private static final int APPEARANCE = 3;
     private static final int[] PRESETS = {5, 10, 20, 30, 60};
     private static final Settings DEF = new Settings();
     private final MenuScreen menu;
@@ -120,7 +120,8 @@ final class SettingsTab implements Tab {
     private int content(Ui ui, int x, int top, int w, int s) {
         return switch (s) {
             case 0 -> keys(ui, x, heading(ui, x, whatToRecord(ui, x, recording(ui, x, top, w), w), w, t("Язык и клавиши", "Language and keys")), w);
-            case 1 -> filters(ui, x, top, w);
+            case 1 -> hud(ui, x, top, w);
+            case 2 -> filters(ui, x, top, w);
             case APPEARANCE -> appearance(ui, x, top, w);
             default -> advanced(ui, x, top, w);
         };
@@ -261,6 +262,28 @@ final class SettingsTab implements Tab {
         ui.text(Draw.ellipsize(ui.font, t("Выключенное не пишется в новые записи, в Просмотре там «не записывалось».", "What is off is not saved in new recordings; View shows \"not recorded\" there."), w - 20),
                 x + 10, y + 8, Theme.DIM);
         return y + 20;
+    }
+
+    /** The REC label, the same options as in the Indicators tab; they bypass the draft and apply at once. */
+    private int hud(Ui ui, int x, int y, int w) {
+        Settings l = live();
+        int right = x + w - 10;
+        row(ui, x, y, w, 30, t("Предпросмотр", "Preview"), t("Меняется сразу, без «Применить»", "Changes at once, no Apply needed"), false);
+        int pw = dev.combatdata.client.RecHud.previewWidth(ui.font, l) + 12, ph = 22, pxl = right - pw, pyl = y + 4;
+        ui.g.fill(pxl, pyl, pxl + pw, pyl + ph / 2, 0xFF7EA6D6);
+        ui.g.fill(pxl, pyl + ph / 2, pxl + pw, pyl + ph, 0xFF5D8C3A);
+        dev.combatdata.client.RecHud.preview(ui.g, ui.font, pxl + 6, pyl + (ph - 13) / 2, l);
+        y += 30;
+        row(ui, x, y, w, 26, t("Показывать надпись записи", "Show recording label"), null, false);
+        ui.toggle(right - 20, y + 7, l.hudVisible, v -> {
+            l.hudVisible = v;
+            CombatDataClient.saveSettings();
+        });
+        y += 26;
+        if (l.hudVisible) y = menu.indicators.recOptions(ui, x, y, w, 0);
+        ui.text(Draw.ellipsize(ui.font, t("То же самое есть во вкладке «Индикаторы».", "The same options are in the Indicators tab."), w - 20),
+                x + 10, y + 8, Theme.DIM);
+        return y + 24;
     }
 
     static int heading(Ui ui, int x, int y, int w, String text) {

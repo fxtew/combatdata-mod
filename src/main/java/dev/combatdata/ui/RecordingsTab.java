@@ -219,9 +219,7 @@ final class RecordingsTab implements Tab {
         String pickL = t("Выбрать", "Select");
         bw = ui.buttonWidth(pickL);
         bx -= bw + 4;
-        ui.button(bx, fy, bw, 16, pickL, Ui.Kind.GHOST, !entries.isEmpty(), () -> startSelect(false));
-        if (hint == null && ui.hover(bx, fy, bw, 16)) hint = t("Отметить несколько записей, например чтобы удалить. Также Ctrl+клик или Shift+клик",
-                "Tick several recordings, for example to delete them. Also Ctrl+click or Shift+click");
+        ui.button(bx, fy, bw, 16, pickL, Ui.Kind.GHOST, !entries.isEmpty(), this::startSelect);
         String left = hint != null ? hint : status;
         int leftColor = hint != null ? Theme.TEXT : statusColor;
         if (left == null) {
@@ -362,41 +360,40 @@ final class RecordingsTab implements Tab {
     }
 
     /**
-     * Plain click selects and double click opens. Ctrl+click ticks one recording, Shift+click ticks the range from the
-     * last clicked row, both switch to selection; in selection a plain click ticks too.
+     * Plain click selects and double click opens. Ctrl+click ticks or unticks just the clicked recording and switches to
+     * selection; in selection a plain click does the same. Nothing gets ticked that was not clicked: the row that was
+     * only highlighted before stays out. Shift+click ticks a range, but only from the last ticked row, never from a
+     * merely highlighted one; with no tick yet it ticks one row.
      */
     private void rowClicked(Path file) {
         boolean ctrl = menu.lastCtrl(), shift = menu.lastShift();
-        if (shift && anchor != null && shown.stream().anyMatch(i -> entries.get(i).file().equals(anchor))) {
-            startSelect(true);
-            int a = -1, b = -1;
-            for (int i = 0; i < shown.size(); i++) {
-                Path p = entries.get(shown.get(i)).file();
-                if (p.equals(anchor)) a = i;
-                if (p.equals(file)) b = i;
-            }
+        if (!ctrl && !shift && !selectMode) {
+            boolean open = menu.lastDoubleClick() && file.equals(selected);
+            selected = file;
+            liveSelected = false;
+            if (open) open();
+            return;
+        }
+        startSelect();
+        int a = anchor != null && marked.contains(anchor) ? indexOf(anchor) : -1, b = indexOf(file);
+        if (shift && a >= 0 && b >= 0) {
             for (int i = Math.min(a, b); i <= Math.max(a, b); i++) marked.add(entries.get(shown.get(i)).file());
-            return;
+        } else if (!marked.remove(file)) {
+            marked.add(file);
         }
-        if (ctrl || shift || selectMode) {
-            startSelect(true);
-            if (!marked.remove(file)) marked.add(file);
-            anchor = file;
-            return;
-        }
-        boolean open = menu.lastDoubleClick() && file.equals(selected);
-        selected = file;
-        anchor = file;
-        liveSelected = false;
-        if (open) open();
+        anchor = marked.contains(file) ? file : null;
     }
 
-    /** keepCurrent: the row selected before stays ticked, as in a file manager. */
-    private void startSelect(boolean keepCurrent) {
+    private int indexOf(Path file) {
+        for (int i = 0; i < shown.size(); i++) if (entries.get(shown.get(i)).file().equals(file)) return i;
+        return -1;
+    }
+
+    private void startSelect() {
         if (selectMode) return;
         selectMode = true;
         marked.clear();
-        if (keepCurrent && selected != null) marked.add(selected);
+        anchor = null;
         liveSelected = false;
         sortOpen = false;
     }
@@ -406,6 +403,7 @@ final class RecordingsTab implements Tab {
         if (!selectMode) return false;
         selectMode = false;
         marked.clear();
+        anchor = null;
         return true;
     }
 
@@ -461,6 +459,9 @@ final class RecordingsTab implements Tab {
         String count = Lang.english() ? n + (n == 1 ? " recording" : " recordings") : n + " " + Lang.plural(n, "запись", "записи", "записей");
         List<String> lines = new ArrayList<>();
         lines.add(t("Будет удалено: ", "To delete: ") + count + " (" + Fmt.size(Recordings.totalBytes(picked)) + ")");
+        // Names, so a recording ticked by mistake is seen before it is gone.
+        for (int i = 0; i < Math.min(4, n); i++) lines.add("· " + Fmt.title(picked.get(i)) + ", " + Fmt.when(picked.get(i)));
+        if (n > 4) lines.add(t("  и ещё ", "  and ") + (n - 4) + t("", " more"));
         if (favs > 0) lines.add(t("Из них в избранном: ", "Favorites among them: ") + favs);
         lines.add(t("Файлы удаляются без возможности восстановления.", "The files are deleted permanently."));
         menu.openModal(new Modal(t("Удалить выбранные записи?", "Delete the selected recordings?"), lines, null, List.of(
