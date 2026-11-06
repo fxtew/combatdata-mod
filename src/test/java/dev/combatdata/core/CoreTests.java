@@ -12,6 +12,7 @@ public final class CoreTests {
     public static void main(String[] args) throws Exception {
         bufferClock();
         recordingSwitch();
+        opponentData();
         bufferTrimAndSnapshot();
         geometry();
         threeBlockHit();
@@ -389,6 +390,41 @@ public final class CoreTests {
         Settings back = Settings.load(f);
         check("выключенная запись переживает перезапуск", !back.recordingEnabled && back.hudShowWhenOff);
         check("переключатель записи не считается несохранённой настройкой", new Settings().diffCount(back) == 1);
+    }
+
+    static void opponentData() throws Exception {
+        OtherStateEvent s1 = new OtherStateEvent(100, 2, A, 10.0004, 64.0625, -5.5, 91.40625f, -12.65625f, true, true,
+                "minecraft:netherite_sword");
+        OtherStateEvent s2 = new OtherStateEvent(200, 4, A, 10.0004, 64.0625, -5.5, 91.40625f, -12.65625f, true, true, null);
+        OtherStateEvent s3 = new OtherStateEvent(300, 6, A, 10.5, 64.0625, -5.5, 91.40625f, -12.65625f, false, true,
+                OtherStateEvent.EMPTY_HAND);
+        check("соседи: то же состояние без учёта времени и предмета", s1.sameState(s2) && !s2.sameState(s3) && !s1.sameState(null));
+        OtherAnimEvent w = new OtherAnimEvent(150, 3, A, OtherAnimEvent.Anim.SWING);
+        Path f = Files.createTempFile("cdopp", Cdrec.EXT);
+        Cdrec.write(f, new Recording(1, "me", B, "26.1.2", 0, 1000, List.of(s1, w, s2, s3)), "test");
+        List<Event> back = Cdrec.read(f).events();
+        check("соседи: события читаются обратно", back.size() == 4 && back.get(0) instanceof OtherStateEvent
+                && back.get(1) instanceof OtherAnimEvent && back.get(3) instanceof OtherStateEvent);
+        OtherStateEvent r1 = (OtherStateEvent) back.get(0), r2 = (OtherStateEvent) back.get(2), r3 = (OtherStateEvent) back.get(3);
+        check("соседи: позиция с точностью до мм, углы до 0.1°", near(r1.x(), 10.0, 1e-9) && near(((OtherStateEvent) back.get(3)).x(), 10.5, 1e-9) && near(r1.y(), 64.063, 1e-9)
+                && near(r1.yaw(), 91.4, 1e-4) && near(r1.pitch(), -12.7, 1e-4) && r1.id().equals(A) && r1.tick() == 2);
+        check("соседи: земля, спринт и предмет", r1.onGround() && r1.sprinting() && "minecraft:netherite_sword".equals(r1.item())
+                && r2.item() == null && !r3.onGround() && OtherStateEvent.EMPTY_HAND.equals(r3.item()));
+        OtherAnimEvent rw = (OtherAnimEvent) back.get(1);
+        check("соседи: взмах", rw.anim() == OtherAnimEvent.Anim.SWING && rw.id().equals(A) && rw.t() == 150);
+        check("соседи: сдвиг времени", s1.withT(40).t() == 40 && ((OtherStateEvent) s1.withT(40)).x() == s1.x()
+                && w.withT(7).t() == 7);
+        Map<String, Object> bad = new LinkedHashMap<>(Cdrec.encode(w));
+        bad.put("a", "DANCE");
+        Map<String, Object> noId = new LinkedHashMap<>(Cdrec.encode(s1));
+        noId.remove("id");
+        check("соседи: неизвестная анимация и запись без id пропускаются", Cdrec.decode(bad) == null && Cdrec.decode(noId) == null);
+        RecordingBuffer b = new RecordingBuffer();
+        long v = b.version();
+        b.add(s1);
+        b.add(w);
+        check("соседи не запускают пересчёт живого буфера", b.version() == v && !b.hasCombatEvents());
+        Files.deleteIfExists(f);
     }
 
     static void bufferTrimAndSnapshot() {
@@ -1558,6 +1594,26 @@ public final class CoreTests {
         Files.deleteIfExists(f);
         System.out.println("20 min of fights with positions = " + kb + " KB");
         check("20 минут боя с позициями меньше 3 МБ (вышло " + kb + " КБ)", kb < 3 * 1024);
+
+        // Same fights plus opponent data: packets every 2 ticks for both players, a swing every 12 ticks.
+        UUID ra = UUID.fromString("3f2b8c1e-7a4d-4e5f-9b6c-1d2e3f4a5b6c"), rb = UUID.fromString("a1b2c3d4-e5f6-4789-8abc-def012345678");
+        List<Event> full = new ArrayList<>(fight);
+        for (int i = 0; i < 24_000; i += 2) {
+            long t = i * 50L;
+            double a = i * 0.05;
+            full.add(new OtherStateEvent(t, i, ra, 102 + Math.sin(a) * 5, 64 + (i % 40 < 8 ? (i % 40) * 0.1 : 0), 201 + Math.cos(a) * 5,
+                    Math.round(((i + 180) % 360) / 1.40625f) * 1.40625f, Math.round((i % 30 - 15) / 1.40625f) * 1.40625f,
+                    i % 40 >= 8, i % 100 < 70, i == 0 ? "minecraft:diamond_sword" : null));
+            full.add(new OtherStateEvent(t, i, rb, 98 - Math.sin(a) * 4, 64.5, 199, Math.round((i % 90) / 1.40625f) * 1.40625f, 0f,
+                    true, false, i == 0 ? "" : null));
+            if (i % 12 == 0) full.add(new OtherAnimEvent(t + 3, i, ra, OtherAnimEvent.Anim.SWING));
+        }
+        full.sort(Comparator.comparingLong(Event::t));
+        Cdrec.write(f, new Recording(1, "me", B, "26.1.2", 0, 1_200_000, full), "test");
+        long kb2 = Files.size(f) / 1024;
+        Files.deleteIfExists(f);
+        System.out.println("20 min of fights with opponent data = " + kb2 + " KB (+" + Math.round((kb2 - kb) * 100.0 / kb) + "%)");
+        check("20 минут боя с данными соседей меньше 3 МБ (вышло " + kb2 + " КБ)", kb2 < 3 * 1024);
     }
 
     static void replay() {

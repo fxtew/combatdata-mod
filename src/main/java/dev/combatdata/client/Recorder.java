@@ -112,7 +112,7 @@ public final class Recorder {
 
     public static void add(Event e) {
         if (e instanceof AttackEvent || e instanceof IncomingHitEvent) lastCombatMs = Math.max(lastCombatMs, e.t());
-        if (!(e instanceof PositionEvent)) WINDOW.add(e);
+        if (!(e instanceof PositionEvent || e instanceof OtherStateEvent || e instanceof OtherAnimEvent)) WINDOW.add(e);
         Event b = TIMELINE.map(e);
         if (b != null) BUFFER.add(b);
         EventLog.log(e);

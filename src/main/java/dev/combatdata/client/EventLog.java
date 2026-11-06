@@ -38,6 +38,8 @@ public final class EventLog {
             case PingEvent p -> null;
             case InputEvent in -> null;
             case PositionEvent p -> null;
+            case OtherStateEvent o -> null;
+            case OtherAnimEvent o -> null;
         };
         if (s != null) CombatDataClient.LOG.info("[CD] t={} {}", formatTime(e.t()), s);
     }

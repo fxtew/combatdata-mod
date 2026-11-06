@@ -183,6 +183,18 @@ public final class Cdrec {
                 m.put("k", "S"); m.put("t", s.t()); m.put("server", s.server()); m.put("dim", s.dimension());
                 m.put("wall", s.wallStartMs());
             }
+            case OtherStateEvent o -> {
+                // Compact: "p" [x, y, z, yaw, pitch], "f" bits 1 on ground, 2 sprinting. Height in millimetres: check A looks
+                // for height changes of 0.01 block.
+                m.put("k", "O"); m.put("t", o.t()); m.put("tick", o.tick()); m.put("id", o.id().toString());
+                m.put("p", List.of(r2(o.x()), r3(o.y()), r2(o.z()), r1(o.yaw()), r1(o.pitch())));
+                m.put("f", (o.onGround() ? 1 : 0) | (o.sprinting() ? 2 : 0));
+                if (o.item() != null) m.put("item", o.item());
+            }
+            case OtherAnimEvent a -> {
+                m.put("k", "W"); m.put("t", a.t()); m.put("tick", a.tick()); m.put("id", a.id().toString());
+                m.put("a", a.anim().name());
+            }
         }
         return m;
     }
@@ -215,6 +227,12 @@ public final class Cdrec {
             case "X" -> position(m);
             case "M" -> new MarkerEvent(l(m, "t"), s(m, "label"));
             case "S" -> new SegmentEvent(l(m, "t"), s(m, "server"), s(m, "dim"), l(m, "wall"));
+            case "O" -> otherState(m);
+            case "W" -> {
+                UUID id = uuid(m, "id");
+                OtherAnimEvent.Anim a = OtherAnimEvent.Anim.parse(s(m, "a"));
+                yield id == null || a == null ? null : new OtherAnimEvent(l(m, "t"), i(m, "tick"), id, a);
+            }
             default -> null;
         };
     }
@@ -249,6 +267,18 @@ public final class Cdrec {
 
     private static double r1(double v) {
         return Math.round(v * 10) / 10.0;
+    }
+
+    private static double r3(double v) {
+        return Math.round(v * 1000) / 1000.0;
+    }
+
+    private static Event otherState(Map<String, Object> m) {
+        UUID id = uuid(m, "id");
+        if (id == null || !(m.get("p") instanceof List<?> p) || p.size() < 5) return null;
+        int f = i(m, "f");
+        return new OtherStateEvent(l(m, "t"), i(m, "tick"), id, num(p, 0), num(p, 1), num(p, 2), (float) num(p, 3),
+                (float) num(p, 4), (f & 1) != 0, (f & 2) != 0, s(m, "item"));
     }
 
     private static double num(List<?> l, int i) {
