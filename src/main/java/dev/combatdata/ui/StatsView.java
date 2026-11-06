@@ -113,6 +113,7 @@ final class StatsView {
     private Rules.Part mainPart = rules.at(0);
     /** A profile chosen to view the whole recording "as if on that server"; null rates each part by its own server. */
     private ServerProfile viewAs;
+    private Map<UUID, Behavior.Report> behavior = Map.of();
 
     StatsView(MenuScreen menu) {
         this.menu = menu;
@@ -167,7 +168,7 @@ final class StatsView {
         String k = s.jumpParams() + "/" + s.interpMs + "/" + profiles.version() + "/" + (viewAs == null ? "" : viewAs.address)
                 + "/" + opp + "/" + timeFrom + "/" + timeTo + "/" + showFails
                 + showNoJump + showMisses + showUnconfirmed + showFlyOut + Lang.english() + "/" + cur
-                + showFiltered + "/" + s.tradeParams() + "/" + showProjectiles;
+                + showFiltered + "/" + s.tradeParams() + "/" + showProjectiles + "/" + s.behavior + s.behaviorParams();
         if (k.equals(key)) return;
         key = k;
         long started = System.nanoTime();
@@ -197,6 +198,8 @@ final class StatsView {
         aim = AimReport.analyze(events);
         calib = Calibration.analyze(attempts, mainPart.jump());
         insights = Insights.evaluate(new Insights.Input(res, mainPart.jump()));
+        // The whole recording, not the time or opponent filter: each opponent is checked on all their hits.
+        behavior = s.behavior ? Behavior.analyze(rec.events(), s.behaviorParams()) : Map.of();
         computeMs = (System.nanoTime() - started) / 1_000_000L;
     }
 
@@ -1941,10 +1944,143 @@ final class StatsView {
                         new int[]{sel ? Theme.ACCENT : Theme.TEXT_STRONG, Theme.GREEN, Theme.TEXT, Theme.RED, Theme.TEXT, Theme.TEXT});
                 UUID id = o.uuid();
                 String nm = o.name();
+                Behavior.Report br = behavior.get(id);
+                if (br != null && br.level() != Behavior.Level.NONE) {
+                    int nx = x + Math.min(ui.font.width(nz(o.name())), (int) (w * at[1]) - 10) + 4;
+                    Draw.circle(ui.g, nx, y + 1, 6, levelColor(br.level()));
+                }
                 ui.click(x - 4, y - 3, w + 8, rh, () -> filter(id, nm));
             }
             y += rh;
         }
+        if (!CombatDataClient.settings().behavior) {
+            line(ui, w, t("Разбор противников выключен: Настройки → Дополнительно.", "Opponent behaviour is off: Settings → Advanced."), x, y + 8, Theme.DIM);
+            return y + 8 + LINE;
+        }
+        if (opp == null) {
+            line(ui, w, t("Клик по противнику покажет блок «Поведение противника». Точка у ника: есть признаки.",
+                    "Click an opponent for the \"Opponent behaviour\" block. A dot by the name: there are signs."), x, y + 8, Theme.DIM);
+            return y + 8 + LINE;
+        }
+        return behaviorBlock(ui, x, y + 10, w, behavior.get(opp));
+    }
+
+    private static int levelColor(Behavior.Level l) {
+        return switch (l) {
+            case NONE -> Theme.GREEN;
+            case ODD -> Theme.AMBER;
+            case MANY -> Theme.RED;
+        };
+    }
+
+    private static String levelName(Behavior.Level l) {
+        return switch (l) {
+            case NONE -> t("нет признаков", "no signs");
+            case ODD -> t("есть странности", "some oddities");
+            case MANY -> t("много признаков", "many signs");
+        };
+    }
+
+    /** Levels in words, each check with its numbers, the cases and honest explanations. No verdict, no percentages. */
+    private int behaviorBlock(Ui ui, int x, int y, int w, Behavior.Report r) {
+        ui.g.fill(x, y - 4, x + w, y - 3, Theme.BORDER);
+        String head = t("Поведение противника: ", "Opponent behaviour: ");
+        ui.text(head, x, y + 2, Theme.TEXT_STRONG);
+        if (r == null) {
+            ui.text(t("он вас не бил, проверять нечего", "they never hit you, nothing to check"), x + ui.font.width(head), y + 2, Theme.MUTED);
+            return y + 2 + LINE;
+        }
+        ui.text(levelName(r.level()), x + ui.font.width(head), y + 2, levelColor(r.level()));
+        y += 2 + LINE;
+        y = wrapped(ui, x, y, w, t("Оценка по данным клиента, не доказательство: проверяются только его удары ближнего боя по вам.",
+                "An estimate from client data, not proof: only their melee hits on you are checked."), Theme.DIM) + 4;
+        Settings s = CombatDataClient.settings();
+        for (Behavior.Result res : r.results()) y = checkBlock(ui, x, y, w, res, s) + 6;
+        y = wrapped(ui, x, y, w, t("Честные причины в целом: высокий или скачущий пинг, изменённый нокбэк сервера, неровная местность.",
+                "Honest causes in general: high or jumpy ping, server-modified knockback, uneven ground."), Theme.DIM);
+        return y + 4;
+    }
+
+    private int checkBlock(Ui ui, int x, int y, int w, Behavior.Result res, Settings s) {
+        boolean crit = res.check() == Behavior.Check.CRITICALS;
+        String name = crit ? t("Криты без падения", "Criticals without falling") : t("Нет замедления после удара", "No slowdown after hitting");
+        String text;
+        if (res.missing() == Behavior.Missing.NO_DATA) {
+            text = t("нет данных о движении противника (запись до разбора противников или без позиций)",
+                    "no opponent movement data (recorded before opponent checks or without positions)");
+        } else if (crit) {
+            text = res.checked() == 0 ? t("критов по вам не было", "no crits on you")
+                    : res.cases().isEmpty() ? t("нет: перед всеми ", "no: before all ") + res.checked() + t(" критами было падение", " crits there was a fall")
+                    : res.cases().size() + t(" из ", " of ") + res.checked() + t(" критов без изменения высоты, в одном бою до ", " crits with no height change, up to ")
+                    + res.maxPerFight() + t(" (порог ", " in one fight (threshold ") + s.bhCritMin + ")";
+        } else {
+            text = res.checked() < s.bhKsMin ? t("мало подходящих спринт-ударов: ", "too few suitable sprint hits: ") + res.checked()
+                    + t(" из нужных ", " of the needed ") + s.bhKsMin
+                    + (res.cases().isEmpty() ? "" : t(", без замедления ", ", without slowdown ") + res.cases().size())
+                    : res.cases().size() + t(" из ", " of ") + res.checked() + t(" спринт-ударов без замедления (порог ", " sprint hits without slowdown (threshold ")
+                    + s.bhKsSharePct + "%)";
+        }
+        int nameW = ui.font.width(name + ": ");
+        ui.text(name + ": ", x, y, res.flagged() ? Theme.AMBER : Theme.TEXT);
+        y = wrappedFrom(ui, x, x + nameW, y, w, text, res.flagged() ? Theme.AMBER : Theme.MUTED);
+        if (!res.cases().isEmpty()) {
+            String key = "behavior/" + res.check();
+            boolean open = expanded.contains(key);
+            String label = (open ? "▾ " : "▸ ") + t("Случаи: ", "Cases: ") + res.cases().size();
+            ui.text(label, x + 8, y, Theme.ACCENT);
+            ui.click(x + 4, y - 2, ui.font.width(label) + 8, LINE, () -> {
+                if (!expanded.remove(key)) expanded.add(key);
+            });
+            y += LINE;
+            if (open) {
+                for (Behavior.Case c : res.cases()) {
+                    String v = crit ? t("высота ±", "height ±") + Fmt.num(c.value(), 3) + t(" бл., на земле ", " bl., on ground ")
+                            + c.groundStates() + t(" из ", " of ") + c.states() + t(" пакетов", " packets")
+                            : t("скорость ", "speed ") + Math.round(c.value() * 100) + t("% от прежней", "% of before");
+                    String row = Fmt.clockMs(c.t()) + " · " + v + (Double.isFinite(c.reach()) ? t(" · дистанция ", " · distance ") + Fmt.num(c.reach(), 2) : "")
+                            + t(" · пинг ", " · ping ") + c.pingMs() + " / " + (c.attackerPingMs() < 0 ? "?" : String.valueOf(c.attackerPingMs()));
+                    boolean hov = ui.hover(x + 4, y - 2, w - 4, LINE);
+                    if (hov) Draw.round(ui.g, x + 4, y - 2, w - 4, LINE, Theme.R_CTRL, Theme.ROW_HOVER);
+                    line(ui, w - 20, row, x + 16, y, Theme.TEXT);
+                    long t = c.t();
+                    ui.click(x + 4, y - 2, w - 4, LINE, () -> moment(t));
+                    if (hov) ui.tip(t("Открыть этот момент в повторе боя (пинг: ваш / его)", "Open this moment in the replay (ping: yours / theirs)"));
+                    y += LINE;
+                }
+            }
+        }
+        String why = crit
+                ? t("Честные причины: лаг или потеря пакетов (высота не обновлялась), скачки пинга.",
+                "Honest causes: lag or packet loss (height not updated), ping spikes.")
+                : t("Честные причины: неровный приход пакетов при скачущем пинге, удар без полного заряда, который не распознан, лёд и эффекты скорости.",
+                "Honest causes: uneven packet arrival with jumpy ping, a not fully charged hit that was not recognised, ice and speed effects.");
+        return wrapped(ui, x + 8, y, w - 8, why, Theme.DIM);
+    }
+
+    /** Fights → Distance with the replay on, at time t. */
+    private void moment(long t) {
+        sub = FIGHTS;
+        fightsMode = F_DISTANCE;
+        replayOn = true;
+        scroll = 0;
+        replayView.seek(t);
+    }
+
+    private int wrapped(Ui ui, int x, int y, int w, String text, int color) {
+        for (String l : ui.wrap(text, w)) {
+            ui.text(l, x, y, color);
+            y += LINE;
+        }
+        return y;
+    }
+
+    /** The first line starts at firstX (after a label), the rest at x. */
+    private int wrappedFrom(Ui ui, int x, int firstX, int y, int w, String text, int color) {
+        List<String> lines = ui.wrap(text, w - (firstX - x));
+        if (lines.isEmpty()) return y + LINE;
+        ui.text(lines.get(0), firstX, y, color);
+        y += LINE;
+        if (lines.size() > 1) y = wrapped(ui, x, y, w, String.join(" ", lines.subList(1, lines.size())), color);
         return y;
     }
 

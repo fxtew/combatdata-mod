@@ -363,11 +363,47 @@ final class SettingsTab implements Tab {
         y += 30;
         y = choice(ui, x, y, w, t("Победитель размена", "Trade winner"), new String[]{t("По ударам", "By hits"), t("По весу", "By weight")},
                 draft.tradeByWeight ? 1 : 0, l.tradeByWeight ? 1 : 0, DEF.tradeByWeight ? 1 : 0, v -> draft.tradeByWeight = v == 1);
+        y = heading(ui, x, y, w, t("Разбор противников", "Opponent behaviour"));
+        y = behavior(ui, x, y, w);
         y = heading(ui, x, y, w, t("Хранилище", "Storage"));
         y = storage(ui, x, y, w);
         y = heading(ui, x, y, w, t("Отладка", "Debugging"));
         return flag(ui, x, y, w, t("Отладочный лог", "Debug log"), t("Строки [CD] в latest.log", "[CD] lines in latest.log"),
                 draft.debugLog, l.debugLog, DEF.debugLog, v -> draft.debugLog = v);
+    }
+
+    private int behavior(Ui ui, int x, int y, int w) {
+        Settings l = live();
+        y = flag(ui, x, y, w, t("Разбор противников", "Opponent behaviour"),
+                t("После боя: признаки читов с конкретными случаями, без процентов", "After a fight: signs of cheats as concrete cases, no percentages"),
+                draft.behavior, l.behavior, DEF.behavior, v -> draft.behavior = v);
+        y = num(ui, x, y, w, t("Криты без падения: случаев за бой", "Crits without falling: cases per fight"), null,
+                draft.bhCritMin, l.bhCritMin, DEF.bhCritMin, "", 1, v -> draft.bhCritMin = v);
+        y = num(ui, x, y, w, t("Криты: высота не менялась больше чем на", "Crits: height changed by at most"), null,
+                draft.bhCritFlatMm, l.bhCritFlatMm, DEF.bhCritFlatMm, t(" мм", " mm"), 5, v -> draft.bhCritFlatMm = v);
+        y = num(ui, x, y, w, t("Без замедления: минимум спринт-ударов", "No slowdown: sprint hits at least"), null,
+                draft.bhKsMin, l.bhKsMin, DEF.bhKsMin, "", 1, v -> draft.bhKsMin = v);
+        y = num(ui, x, y, w, t("Без замедления: доля таких ударов", "No slowdown: share of such hits"), null,
+                draft.bhKsSharePct, l.bhKsSharePct, DEF.bhKsSharePct, "%", 5, v -> draft.bhKsSharePct = v);
+        y = num(ui, x, y, w, t("Без замедления: скорость после удара выше", "No slowdown: speed after the hit above"),
+                t("Доля от скорости до удара; честно около 83%", "Share of the speed before the hit; honest is about 83%"),
+                draft.bhKsRatioPct, l.bhKsRatioPct, DEF.bhKsRatioPct, "%", 1, v -> draft.bhKsRatioPct = v);
+        return y;
+    }
+
+    private int num(Ui ui, int x, int y, int w, String label, String hint, int value, int liveV, int def, String unit, int step,
+                    java.util.function.IntConsumer set) {
+        int h = hint == null ? 26 : 30, right = x + w - 10, sw = 72;
+        row(ui, x, y, w, h, label, hint, value != liveV);
+        ui.stepper(right - sw, y + (h - 16) / 2, sw, value + unit, () -> {
+            set.accept(value - step);
+            draft.clamp();
+        }, () -> {
+            set.accept(value + step);
+            draft.clamp();
+        });
+        reset(ui, right - sw - 4, y + (h - 14) / 2, value != def, def + unit, () -> set.accept(def));
+        return y + h;
     }
 
     private static String onOff(boolean v) {
