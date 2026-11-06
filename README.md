@@ -1,28 +1,19 @@
 # Combat Data
 
-Client-side Fabric mod for Minecraft 26.1.2 that keeps a rolling recording of sword PvP fights and shows
-statistics and charts in game. It only observes: nothing is sent over the network.
+Client-side Fabric mod that records your sword PvP fights and shows statistics and charts in game.
+It only observes: nothing is sent over the network. Builds for Minecraft 26.1.2, 26.2 and 1.21.11.
 
 ## Features
 
-- Rolling buffer (1–120 min) with a REC indicator on the HUD; F9 saves the buffer, and fights can be saved
-  automatically when they end (off by default).
-- Hit tracking: confirmed hits, misses with their cause, reach, aim offset, crits and sweeps.
-- Aim breakdown: where the crosshair was on every swing including misses, which way misses go, accuracy against
-  strafing and jumping opponents, on fast flicks, in the air and by distance, with concrete tips.
-- Jump reset, W-tap, combos, trades and 3 block hit analysis.
-- Charts, per-fight breakdown, top-down fight replay and progress across recordings.
-- Optional HUD indicators, each movable and resizable: exact health, reach of the last hit, combo, ping,
-  attack charge, jump reset timing and 3 block hits (with note block sounds), session totals. They show only
-  your own data about what already happened.
-- Fight summary card on the HUD, themes, Russian and English interface, search across the menu (Ctrl+F).
-- Comparison of your recordings or periods (last 7 days against the 7 before, one server against the rest,
-  the latest recording against your norm), with intervals that tell real changes from chance.
-- Sharing: Recordings → Share saves a recording (or one fight, or several as a .zip) to `combatdata/exports`,
-  with opponent names hidden by default. To open a friend's file, drag the `.cdrec` or `.zip` into the game window
-  with the menu open, or put it in `combatdata/inbox`. Shared recordings live in `combatdata/shared/<sender>` and
-  never count towards your own progress.
-- Works with VulkanMod: everything is drawn with standard GUI fills and text.
+- Rolling buffer (1–120 min) with a REC label on the HUD; F9 saves it, fights can also be saved automatically.
+- Hits, misses, reach, aim, crits, jump reset, W-tap, combos, trades and 3 block hits.
+- Charts, per-fight breakdown, top-down replay, progress and comparison across recordings.
+- HUD indicators (health, reach, combo, ping, charge, jump reset) and a fight summary card.
+- Opponent behaviour: signs that an opponent's hits do not add up, with the cases and honest causes like lag.
+  An estimate from client data, not proof.
+- Server profiles: jump reset window, knockback and reach per server.
+- Sharing: export a recording or one fight as a file, or as a code that fits in a chat message.
+- Themes, Russian and English, search across the menu (Ctrl+F). Works with VulkanMod.
 
 ## Controls
 
@@ -30,11 +21,10 @@ statistics and charts in game. It only observes: nothing is sent over the networ
 |---|---|
 | Right Shift | Open the menu |
 | F9 | Save the buffer |
-| unbound | Add a marker, reset the buffer, show or hide indicators, turn recording on or off |
+| unbound | Marker, reset the buffer, indicators on/off, recording on/off |
 
-Commands: `/combatdata open`, `/combatdata save`, `/combatdata marker`, `/combatdata reset confirm`,
-`/combatdata record on|off|toggle`.
-With [Mod Menu](https://modrinth.com/mod/modmenu) installed, the menu also opens from the mod list.
+Commands: `/combatdata open | save | marker | reset confirm | record on|off|toggle`.
+With [Mod Menu](https://modrinth.com/mod/modmenu) the menu also opens from the mod list.
 
 ## Building
 
@@ -45,8 +35,8 @@ Requires JDK 25.
 ./gradlew runClient  # starts the game with the mod
 ```
 
-The jar is written to `build/libs/`. Recordings are stored in `.minecraft/combatdata/recordings/`, settings in
-`config/combatdata.json`, server profiles (how each server's recordings are rated) in `config/combatdata-servers.json`.
+The jar is written to `build/libs/`. Recordings are stored in `.minecraft/combatdata/recordings/`,
+settings in `config/combatdata.json` and `config/combatdata-servers.json`.
 
 ## License
 
