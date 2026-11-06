@@ -19,7 +19,14 @@ public final class Cdrec {
 
     public record Header(int schema, String player, UUID playerUuid, String mcVersion, long wallStartMs,
                          long durationMs, int attacks, int hitsConfirmed, int incoming, int jumps, List<String> servers,
-                         List<String> opponents, int notRecorded) {
+                         List<String> opponents, int notRecorded, Share share, String mod) {
+        public Header(int schema, String player, UUID playerUuid, String mcVersion, long wallStartMs, long durationMs,
+                      int attacks, int hitsConfirmed, int incoming, int jumps, List<String> servers, List<String> opponents,
+                      int notRecorded) {
+            this(schema, player, playerUuid, mcVersion, wallStartMs, durationMs, attacks, hitsConfirmed, incoming, jumps,
+                    servers, opponents, notRecorded, null, null);
+        }
+
         public Header(int schema, String player, UUID playerUuid, String mcVersion, long wallStartMs, long durationMs,
                       int attacks, int hitsConfirmed, int incoming, int jumps, List<String> servers, List<String> opponents) {
             this(schema, player, playerUuid, mcVersion, wallStartMs, durationMs, attacks, hitsConfirmed, incoming, jumps,
@@ -28,10 +35,17 @@ public final class Cdrec {
     }
 
     public static void write(Path file, Recording r, String modVersion) throws IOException {
+        write(file, r, modVersion, null);
+    }
+
+    /** share: who shared this file and what was hidden (Share), null for an own recording. */
+    public static void write(Path file, Recording r, String modVersion, Share share) throws IOException {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         try (Writer out = new BufferedWriter(new OutputStreamWriter(
                 new GZIPOutputStream(Files.newOutputStream(tmp)), StandardCharsets.UTF_8))) {
-            out.write(Json.write(header(r, modVersion)));
+            Map<String, Object> head = header(r, modVersion);
+            if (share != null) head.put("share", share.toMap());
+            out.write(Json.write(head));
             out.write('\n');
             for (Event e : r.events()) {
                 out.write(Json.write(encode(e)));
@@ -78,7 +92,8 @@ public final class Cdrec {
             Map<String, Object> sum = obj(h.getOrDefault("summary", new LinkedHashMap<>()));
             return new Header(i(h, "schema"), s(h, "player"), uuid(h, "uuid"), s(h, "mc"), l(h, "wallStart"),
                     l(h, "duration"), i(sum, "attacks"), i(sum, "hits"), i(sum, "incoming"), i(sum, "jumps"),
-                    strList(sum.get("servers")), strList(sum.get("opponents")), Features.parse(h.get("notRecorded")));
+                    strList(sum.get("servers")), strList(sum.get("opponents")), Features.parse(h.get("notRecorded")),
+                    Share.fromMap(h.get("share")), s(h, "mod"));
         }
     }
 

@@ -28,8 +28,17 @@ public final class Recordings {
     private static final Pattern DEFAULT_NAME = Pattern.compile("\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_.*");
     private static Favorites favorites;
 
-    /** null if the file is unreadable (corrupt or foreign). */
-    public record Entry(Path file, String stem, Cdrec.Header header, long modified, long size) {
+    /** header: null if the file is unreadable (corrupt or made by another program). sharedBy: the sender folder for a
+     * recording someone shared, null for an own one. */
+    public record Entry(Path file, String stem, Cdrec.Header header, long modified, long size, String sharedBy) {
+        public Entry(Path file, String stem, Cdrec.Header header, long modified, long size) {
+            this(file, stem, header, modified, size, null);
+        }
+
+        public boolean shared() {
+            return sharedBy != null;
+        }
+
         public boolean defaultName() {
             return DEFAULT_NAME.matcher(stem).matches();
         }
@@ -49,6 +58,24 @@ public final class Recordings {
         return FabricLoader.getInstance().getGameDir().resolve("combatdata").resolve("recordings");
     }
 
+    private static Path root() {
+        return FabricLoader.getInstance().getGameDir().resolve("combatdata");
+    }
+
+    /** Recordings others shared, one folder per sender. They never count towards the own progress. */
+    public static Path sharedDir() {
+        return root().resolve("shared");
+    }
+
+    /** Everything put here is imported when the menu opens. */
+    public static Path inboxDir() {
+        return root().resolve("inbox");
+    }
+
+    public static Path exportsDir() {
+        return root().resolve("exports");
+    }
+
     private static Path favoritesFile() {
         return FabricLoader.getInstance().getGameDir().resolve("combatdata").resolve("favorites.json");
     }
@@ -59,11 +86,11 @@ public final class Recordings {
     }
 
     public static synchronized boolean favorite(Entry e) {
-        return favorites().has(e.stem());
+        return favorites().has(favKey(e.file()));
     }
 
     public static synchronized void setFavorite(Entry e, boolean fav) {
-        favorites().set(e.stem(), fav);
+        favorites().set(favKey(e.file()), fav);
         saveFavorites();
     }
 
@@ -81,8 +108,16 @@ public final class Recordings {
         return t;
     });
 
-    /** Lists recordings in the background; the callback runs on the game thread. */
+    /** Lists own and shared recordings in the background; the callback runs on the game thread. */
     public static void listAsync(Consumer<List<Entry>> done) {
+        LOADER.execute(() -> {
+            List<Entry> l = listAll();
+            Minecraft.getInstance().execute(() -> done.accept(l));
+        });
+    }
+
+    /** Own recordings only, in the background (storage limits count only these). */
+    public static void listOwnAsync(Consumer<List<Entry>> done) {
         LOADER.execute(() -> {
             List<Entry> l = list();
             Minecraft.getInstance().execute(() -> done.accept(l));
@@ -101,10 +136,35 @@ public final class Recordings {
         });
     }
 
+    /** Own recordings only: progress, cleanup and comparisons use this. */
     public static List<Entry> list() {
         List<Entry> out = new ArrayList<>();
-        Path dir = dir();
-        if (!Files.isDirectory(dir)) return out;
+        scan(dir(), null, out);
+        out.sort(Comparator.comparingLong(Entry::time).reversed());
+        return out;
+    }
+
+    /** Own and shared recordings, for the Recordings tab. */
+    public static List<Entry> listAll() {
+        List<Entry> out = new ArrayList<>();
+        scan(dir(), null, out);
+        Path shared = sharedDir();
+        if (Files.isDirectory(shared)) {
+            try (Stream<Path> dirs = Files.list(shared)) {
+                for (Path d : dirs.filter(Files::isDirectory).toList()) {
+                    String who = d.getFileName().toString();
+                    if (!who.startsWith(".")) scan(d, who, out);
+                }
+            } catch (IOException e) {
+                CombatDataClient.LOG.error("[CD] не удалось прочитать папку чужих записей", e);
+            }
+        }
+        out.sort(Comparator.comparingLong(Entry::time).reversed());
+        return out;
+    }
+
+    private static void scan(Path dir, String sharedBy, List<Entry> out) {
+        if (!Files.isDirectory(dir)) return;
         try (Stream<Path> files = Files.list(dir)) {
             for (Path f : files.filter(p -> p.getFileName().toString().endsWith(Cdrec.EXT)).toList()) {
                 String name = f.getFileName().toString();
@@ -120,13 +180,11 @@ public final class Recordings {
                     size = Files.size(f);
                 } catch (IOException ignored) {
                 }
-                out.add(new Entry(f, name.substring(0, name.length() - Cdrec.EXT.length()), h, mod, size));
+                out.add(new Entry(f, name.substring(0, name.length() - Cdrec.EXT.length()), h, mod, size, sharedBy));
             }
         } catch (IOException e) {
             CombatDataClient.LOG.error("[CD] не удалось прочитать папку записей", e);
         }
-        out.sort(Comparator.comparingLong(Entry::time).reversed());
-        return out;
     }
 
     public static Path rename(Path file, String newName) throws IOException {
@@ -139,9 +197,9 @@ public final class Recordings {
         Path moved = Files.move(file, target);
         ProgressData.invalidate();
         synchronized (Recordings.class) {
-            String old = stem(file);
+            String old = favKey(file);
             if (favorites().has(old)) {
-                favorites().renamed(old, clean);
+                favorites().renamed(old, favKey(moved));
                 saveFavorites();
             }
         }
@@ -152,11 +210,18 @@ public final class Recordings {
         Files.deleteIfExists(file);
         ProgressData.invalidate();
         synchronized (Recordings.class) {
-            if (favorites().has(stem(file))) {
-                favorites().set(stem(file), false);
+            if (favorites().has(favKey(file))) {
+                favorites().set(favKey(file), false);
                 saveFavorites();
             }
         }
+    }
+
+    /** Own recordings keep the plain name as before; shared ones are prefixed with their sender folder. */
+    static String favKey(Path file) {
+        Path parent = file.getParent();
+        if (parent == null || parent.equals(dir()) || parent.getParent() == null || !parent.getParent().equals(sharedDir())) return stem(file);
+        return "@" + parent.getFileName() + "/" + stem(file);
     }
 
     private static String stem(Path file) {
