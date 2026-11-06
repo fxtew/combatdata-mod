@@ -39,7 +39,7 @@ public final class FightSummary {
     }
 
     public static Result last(Recording r, long nowMs, long quietMs, Rules rules, StatFilter sf, Trades.Params tp) {
-        List<Stats.Fight> fights = Stats.fights(sf.apply(r.events()).kept(), Stats.FIGHT_GAP_MS);
+        List<Stats.Fight> fights = Stats.fights(sf.apply(Stats.withoutMovement(r.events())).kept(), Stats.FIGHT_GAP_MS);
         if (fights.isEmpty()) return null;
         Stats.Fight f = fights.get(fights.size() - 1);
         if (nowMs - f.endMs() < quietMs || !sf.fightCounts(f)) return null;

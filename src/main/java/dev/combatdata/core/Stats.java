@@ -103,6 +103,17 @@ public final class Stats {
         return out;
     }
 
+    /** Positions and opponent states make up most of a recording and no stat reads them. */
+    public static boolean movement(Event e) {
+        return e instanceof PositionEvent || e instanceof OtherStateEvent || e instanceof OtherAnimEvent;
+    }
+
+    public static List<Event> withoutMovement(List<Event> ev) {
+        List<Event> out = new ArrayList<>();
+        for (Event e : ev) if (!movement(e)) out.add(e);
+        return out;
+    }
+
     public static List<Event> events(Recording r, Filter f) {
         List<Event> ev = new ArrayList<>();
         for (Event e : r.events()) {
