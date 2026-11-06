@@ -2024,11 +2024,21 @@ final class StatsView {
             case VELOCITY -> t("Нет отброса", "No knockback");
             case REACH -> t("Удары издалека", "Long reach");
             case HITBOX -> t("Удары мимо хитбокса", "Hits outside the hitbox");
+            case TIMING -> t("Ровный тайминг ударов", "Even hit timing");
+            case JUMP_RESET -> t("Jump reset противника", "Opponent jump reset");
         };
     }
 
     private static String checkText(Behavior.Result res, Settings s) {
         int n = res.cases().size(), k = res.checked();
+        if (res.missing() == Behavior.Missing.NO_DATA && res.check() == Behavior.Check.TIMING) {
+            return t("нет данных о взмахах противника (запись до разбора противников или без позиций)",
+                    "no opponent swing data (recorded before opponent checks or without positions)");
+        }
+        if (res.missing() == Behavior.Missing.KB_LIKE_JUMP) {
+            return t("на этом сервере нокбэк подбрасывает как прыжок, jump reset не отличить",
+                    "knockback on this server lifts like a jump, a jump reset cannot be told apart");
+        }
         if (res.missing() == Behavior.Missing.NO_DATA) {
             return res.check() == Behavior.Check.REACH
                     ? t("нет данных о дистанции (запись без полученных ударов)", "no distance data (recorded without hits taken)")
@@ -2061,6 +2071,16 @@ final class StatsView {
                     : n == 0 ? t("нет: во всех ", "no: in all ") + k + t(" ударах взгляд проходил через ваш хитбокс", " hits their look went through your hitbox")
                     : n + t(" из ", " of ") + k + t(" ударов со взглядом мимо хитбокса больше чем на ", " hits looking past the hitbox by more than ")
                     + s.bhHbExtraDeg + t("°, в одном бою до ", "°, up to ") + res.maxPerFight() + t(" (порог ", " in one fight (threshold ") + s.bhHbMin + ")";
+            case TIMING -> k < s.bhTimMin ? t("мало ударов на перезарядке: ", "too few hits at full charge: ") + k + t(" из нужных ", " of the needed ") + s.bhTimMin
+                    : (res.flagged() ? t("подозрительно ровный тайминг: ", "suspiciously even timing: ") : "") + k
+                    + t(" ударов на перезарядке, в одном тике ", " hits at full charge, on one tick ")
+                    + Math.round(Behavior.topTickShare(res.values()) * 100) + t("% (порог ", "% (threshold ") + s.bhTimTopPct
+                    + t("%), медиана опоздания ", "%), median lateness ") + Fmt.num(Behavior.median(res.values()), 1) + t(" тика", " ticks");
+            case JUMP_RESET -> k < s.bhJrMin ? t("мало ваших ударов по нему на земле: ", "too few of your hits on them on ground: ") + k
+                    + t(" из нужных ", " of the needed ") + s.bhJrMin + (n == 0 ? "" : t(", jump reset после ", ", jump reset after ") + n)
+                    : t("jump reset после ", "jump reset after ") + n + t(" из ", " of ") + k + t(" ваших ударов по нему на земле, в тик нокбэка ",
+                    " of your hits on them on ground, on the knockback tick ") + res.maxPerFight()
+                    + (res.flagged() ? t(": очень ровно (порог ", ": very even (threshold ") + s.bhJrPct + "%)" : "");
         };
     }
 
@@ -2072,6 +2092,10 @@ final class StatsView {
             case VELOCITY -> t("отлёт ", "knockback ") + Math.round(c.value() * 100) + t("% ожидаемого", "% of expected");
             case REACH -> t("на его экране ≈", "on their screen ≈") + Fmt.num(c.value(), 2) + t(" бл.", " bl.");
             case HITBOX -> t("мимо на ", "off by ") + Fmt.num(c.value(), 1) + "°";
+            case TIMING -> "";
+            case JUMP_RESET -> Double.isNaN(c.value()) ? t("jump reset", "jump reset")
+                    : Behavior.onKbTick(c.value()) ? t("jump reset в тик нокбэка", "jump reset on the knockback tick")
+                    : t("прыжок раньше нокбэка на ", "jump before the knockback by ") + Math.round(-c.value()) + t(" мс", " ms");
         };
     }
 
@@ -2081,12 +2105,16 @@ final class StatsView {
                     "Honest causes: lag or packet loss (height not updated), ping spikes.");
             case KEEP_SPRINT -> t("Честные причины: неровный приход пакетов при скачущем пинге, удар без полного заряда, который не распознан, лёд и эффекты скорости.",
                     "Honest causes: uneven packet arrival with jumpy ping, a not fully charged hit that was not recognised, ice and speed effects.");
-            case VELOCITY -> t("Честные причины: он шёл вам навстречу или сделал jump reset, стена за спиной, сервер меняет нокбэк, мало данных калибровки.",
-                    "Honest causes: they walked into you or did a jump reset, a wall behind them, the server changes knockback, little calibration data.");
+            case VELOCITY -> t("Честные причины: стена за спиной, сервер меняет нокбэк, мало данных калибровки. Удары после его jump reset и когда он бежал на вас не оцениваются.",
+                    "Honest causes: a wall behind them, the server changes knockback, little calibration data. Hits followed by their jump reset or while they ran at you are not rated.");
             case REACH -> t("Честные причины: скачки пинга, неверный пинг противника в списке игроков (сервер может его скрывать или округлять).",
                     "Honest causes: ping spikes, a wrong opponent ping in the player list (servers may hide or round it).");
             case HITBOX -> t("Честные причины: очень резкий разворот вплотную, скачки пинга, неточная оценка задержки.",
                     "Honest causes: a very fast turn at point-blank range, ping spikes, an inexact delay estimate.");
+            case TIMING -> t("Честные причины: частый клик сразу после перезарядки (сервер принимает удары раз в тик), эффект «Спешка».",
+                    "Honest causes: fast clicking right after the charge (the server takes hits once per tick), the Haste effect.");
+            case JUMP_RESET -> t("Только для сведения, в оценку не входит: сильные игроки часто делают jump reset. Время видно с точностью до тика.",
+                    "Information only, not part of the estimate: strong players reset a lot. Timing is exact to a tick at best.");
         };
     }
 
@@ -2094,8 +2122,9 @@ final class StatsView {
         String name = checkName(res.check());
         String text = checkText(res, s);
         int nameW = ui.font.width(name + ": ");
-        ui.text(name + ": ", x, y, res.flagged() ? Theme.AMBER : Theme.TEXT);
-        y = wrappedFrom(ui, x, x + nameW, y, w, text, res.flagged() ? Theme.AMBER : Theme.MUTED);
+        boolean warn = res.flagged() && res.check() != Behavior.Check.JUMP_RESET;
+        ui.text(name + ": ", x, y, warn ? Theme.AMBER : Theme.TEXT);
+        y = wrappedFrom(ui, x, x + nameW, y, w, text, warn ? Theme.AMBER : Theme.MUTED);
         if (!res.cases().isEmpty()) {
             String key = "behavior/" + res.check();
             boolean open = expanded.contains(key);

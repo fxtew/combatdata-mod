@@ -16,6 +16,7 @@ public final class CoreTests {
         serverProfiles();
         behavior();
         behaviorCDE();
+        behaviorFG();
         bufferTrimAndSnapshot();
         geometry();
         threeBlockHit();
@@ -571,6 +572,21 @@ public final class CoreTests {
                 && near(kr.kb().allH(), 1.0, 1e-9) && kr.kb().sprintN() == 2 && near(kr.kb().sprintH(), 1.2, 1e-9)
                 && kr.kb().normalN() == 2 && near(kr.kb().normalH(), 0.8, 1e-9) && near(kr.kb().normalV(), 0.4, 1e-9)
                 && kr.kb().updatedMs() == 77);
+        List<Event> tp = new ArrayList<>();
+        tp.add(new SegmentEvent(0, "one.net", "d", 0));
+        double[] kbs = {0.8, 0.8, -60, 0.8, 3.0, 0.8};
+        for (int i = 0; i < kbs.length; i++) {
+            long t = 1000 + i * 2000L;
+            tp.add(new OtherStateEvent(t - 50, 0, A, 0, 64, 0, 0, 0, true, false, null));
+            tp.add(new PositionEvent(t - 10, 0, 0, 64, 0, 0, List.of()));
+            tp.add(new IncomingHitEvent(t, 0, A, "Alpha", true, false, true, 40, kbs[i]));
+            tp.add(new PositionEvent(t + 200, 0, 0, i == 2 ? 120 : 64.4, 0, 0, List.of()));
+        }
+        ServerCalibration tc = new ServerCalibration(one, two2, s);
+        tc.add(new Recording(1, "me", B, "26.1.2", 0, 14_000, tp), StatFilter.NONE);
+        ServerProfile.Knockback tk = tc.build(1).kb();
+        check("нокбэк сервера: телепорт отброшен, медиана вместо среднего", tk.normalN() == 5 && near(tk.normalH(), 0.8, 1e-9)
+                && near(tk.normalV(), 0.4, 1e-9) && tk.allN() == 5);
         ServerCalibration.apply(one, kr, 88);
         check("мало попыток: калибровка не найдена, но число сохранено", !one.cal.valid() && one.cal.updatedMs() == 88
                 && one.kb.allN() == 4);
@@ -691,6 +707,107 @@ public final class CoreTests {
         check("разбор по умолчанию включён, пороги из ТЗ", s.behavior && s.behaviorParams().equals(Behavior.Params.DEFAULT));
     }
 
+    /** F: hits by A once a second, each gapTicks[i % n] ticks after the previous swing, plus the hit's own swing. */
+    static List<Event> timed(int hits, int[] gapTicks, boolean swings) {
+        List<Event> l = new ArrayList<>();
+        for (int i = 0; i < hits; i++) {
+            long t = 2000 + i * 1000L;
+            l.add(meleeFrom(t, A, Weapon.SWORD, 2.6, 0, 0, 60));
+            if (!swings) continue;
+            l.add(new OtherAnimEvent(t - gapTicks[i % gapTicks.length] * 50L + 3, 0, A, OtherAnimEvent.Anim.SWING));
+            l.add(new OtherAnimEvent(t + 8, 0, A, OtherAnimEvent.Anim.SWING));
+        }
+        l.sort(Comparator.comparingLong(Event::t));
+        return l;
+    }
+
+    /**
+     * G: our hits on A every 2 s, HURT 60 ms later, their take-off 100 ms after that (plus shift ms) as a jump
+     * (reset[i]) or a knockback lift; they land 600 ms later. One melee hit on us so a report exists.
+     */
+    static List<Event> resets(boolean[] reset, long shift, boolean hurt, boolean lag) {
+        List<Event> l = new ArrayList<>();
+        long[] off = new long[reset.length];
+        for (int i = 0; i < reset.length; i++) {
+            long h = 2000 + i * 2000L;
+            off[i] = h + 160 + (reset[i] ? shift : 0);
+            l.add(atk(h, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+            if (hurt) l.add(new OtherAnimEvent(h + 60, 0, A, OtherAnimEvent.Anim.HURT));
+        }
+        l.add(meleeFrom(1000, A, Weapon.SWORD, 2.6, 0, 0, 60));
+        long endT = 2000 + reset.length * 2000L;
+        for (int k = 0; k * 50L <= endT; k++) {
+            long t = k * 50L;
+            double y = 64;
+            boolean ground = true;
+            for (int i = 0; i < reset.length; i++) {
+                if (t >= off[i] && t < off[i] + 600) {
+                    int n = (int) ((t - off[i]) / 50) + 1;
+                    y = 64 + Behavior.rise(reset[i] ? Behavior.JUMP_VY : Behavior.KB_VY_SPRINT, n);
+                    ground = false;
+                    if (lag) t = -1;
+                }
+            }
+            if (t >= 0) l.add(new OtherStateEvent(t, k, A, 2, y, 0, 90, 0, ground, false, null));
+        }
+        l.sort(Comparator.comparingLong(Event::t));
+        return l;
+    }
+
+    static void behaviorFG() {
+        Behavior.Params p = Behavior.Params.DEFAULT;
+        // F
+        Behavior.Report bot = Behavior.analyze(timed(25, new int[]{13}, true), p).get(A);
+        Behavior.Result fb = bot.get(Behavior.Check.TIMING);
+        check("F: триггербот на полной перезарядке срабатывает", fb.checked() == 25 && fb.flagged()
+                && near(Behavior.topTickShare(fb.values()), 1, 1e-9) && near(Behavior.median(fb.values()), 0.5, 1e-9));
+        check("F: одна проверка даёт «есть странности»", bot.level() == Behavior.Level.ODD);
+        Behavior.Result fh = Behavior.analyze(timed(40, new int[]{11, 12, 13, 14, 12, 13, 15, 11}, true), p).get(A).get(Behavior.Check.TIMING);
+        check("F: честный разброс по тикам не срабатывает", fh.checked() == 40 && !fh.flagged()
+                && near(Behavior.topTickShare(fh.values()), 0.25, 1e-9));
+        Behavior.Result fl = Behavior.analyze(timed(25, new int[]{13}, false), p).get(A).get(Behavior.Check.TIMING);
+        check("F: без взмахов (старая запись) нет данных", fl.checked() == 0 && fl.missing() == Behavior.Missing.NO_DATA && !fl.flagged());
+        Behavior.Result ff = Behavior.analyze(timed(10, new int[]{13}, true), p).get(A).get(Behavior.Check.TIMING);
+        check("F: меньше 20 ударов: мало данных", ff.missing() == Behavior.Missing.TOO_FEW && !ff.flagged());
+        Behavior.Result far = Behavior.analyze(timed(25, new int[]{19}, true), p).get(A).get(Behavior.Check.TIMING);
+        check("F: удары не на перезарядке не считаются", far.checked() == 0 && !far.flagged());
+        // G
+        check("G: прыжок и подброс по высоте", Behavior.takeOff(0.42, 1) == 1 && Behavior.takeOff(0.4, 1) == 0
+                && Behavior.takeOff(0.361, 1) == 0 && Behavior.takeOff(0.7532, 2) == 1 && Behavior.takeOff(0.7136, 2) == 0
+                && Behavior.takeOff(0.6, 1) == -1 && Behavior.takeOff(0.42, 0) == 1);
+        boolean[] all = new boolean[20], third = new boolean[20], half = new boolean[20];
+        for (int i = 0; i < 20; i++) {
+            all[i] = true;
+            third[i] = i % 3 == 0;
+            half[i] = i % 2 == 0;
+        }
+        Behavior.Report gb = Behavior.analyze(resets(all, 0, true, false), p).get(A);
+        Behavior.Result g = gb.get(Behavior.Check.JUMP_RESET);
+        check("G: все удары с jump reset: «очень ровно», но уровень не меняется", g.checked() == 20 && g.cases().size() == 20
+                && g.flagged() && g.maxPerFight() == 20 && gb.level() == Behavior.Level.NONE);
+        Behavior.Result gh = Behavior.analyze(resets(third, 0, true, false), p).get(A).get(Behavior.Check.JUMP_RESET);
+        check("G: честная доля ресетов", gh.checked() == 20 && gh.cases().size() == 7 && !gh.flagged() && gh.maxPerFight() == 7
+                && near(gh.cases().get(0).value(), 0, 1e-9));
+        Behavior.Result ge = Behavior.analyze(resets(half, -50, true, false), p).get(A).get(Behavior.Check.JUMP_RESET);
+        check("G: прыжок на тик раньше нокбэка не в тик", ge.cases().size() == 10 && ge.maxPerFight() == 0
+                && near(ge.cases().get(0).value(), -50, 1e-9) && !Behavior.onKbTick(-50) && Behavior.onKbTick(0));
+        Behavior.Result go = Behavior.analyze(resets(third, 0, false, false), p).get(A).get(Behavior.Check.JUMP_RESET);
+        check("G: без HURT (старая запись) по нашему пингу", go.checked() == 20 && go.cases().size() == 7 && go.maxPerFight() == 7);
+        Behavior.Result gl = Behavior.analyze(resets(third, 0, true, true), p).get(A).get(Behavior.Check.JUMP_RESET);
+        check("G: лаг без пакетов после удара: нет данных", gl.checked() == 0 && gl.skipped() == 20 && gl.missing() == Behavior.Missing.NO_DATA);
+        Settings s = new Settings();
+        ServerProfile prof = ServerProfile.create("kb.net", ServerProfile.Preset.CUSTOM, ServerProfile.Origin.AUTO, s, 1);
+        prof.kb = new ServerProfile.Knockback(0.9, 1.0, 20, 1.3, 1.25, 20, 1.0, 40, 1);
+        ServerProfiles ps = new ServerProfiles();
+        ps.put(prof);
+        List<Event> sv = new ArrayList<>(resets(third, 0, true, false));
+        sv.add(0, new SegmentEvent(0, "kb.net", "d", 0));
+        Behavior.Result gk = Behavior.analyze(sv, p, Rules.of(sv, ps, s)).get(A).get(Behavior.Check.JUMP_RESET);
+        check("G: нокбэк сервера подбрасывает как прыжок: не запускается", gk.checked() == 0 && gk.missing() == Behavior.Missing.KB_LIKE_JUMP);
+        check("пороги F и G по умолчанию", p.timMin() == 20 && p.timTopPct() == 75 && near(p.timLateTicks(), 1, 1e-9)
+                && p.jrMin() == 15 && p.jrPct() == 95 && s.behaviorParams().equals(p));
+    }
+
     static IncomingHitEvent meleeFrom(long t, UUID who, Weapon w, double reach, double attV, double selfV, int attPing) {
         return new IncomingHitEvent(t, 0, who, "Alpha", true, false, true, 40, 0.9, IncomingHitEvent.Kind.MELEE, null, w,
                 w == Weapon.SPEAR ? "minecraft:iron_spear" : "minecraft:diamond_sword", Relation.TEAM_NONE, reach, 3.0, attV, selfV, attPing);
@@ -705,10 +822,10 @@ public final class CoreTests {
         ServerProfiles ps = new ServerProfiles();
         ps.put(prof);
         List<Long> hitT = new ArrayList<>();
-        for (int i = 1; i <= 6; i++) hitT.add(i * 2000L);
+        for (int i = 1; i <= 8; i++) hitT.add(i * 2000L);
         List<Event> honest = new ArrayList<>(), cheat = new ArrayList<>();
         for (List<Event> l : List.of(honest, cheat)) l.add(new SegmentEvent(0, "kb.net", "d", 0));
-        for (int k = 0; k <= 280; k++) {
+        for (int k = 0; k <= 380; k++) {
             long t = k * 50L;
             double fly = 0;
             for (long h : hitT) if (t > h + 40) fly += 0.9 * Math.min(1, (t - h - 40) / 500.0);
@@ -727,8 +844,8 @@ public final class CoreTests {
         Rules rules = Rules.of(honest, ps, s);
         Behavior.Result hc = Behavior.analyze(honest, p, rules).get(A).get(Behavior.Check.VELOCITY);
         Behavior.Result cc = Behavior.analyze(cheat, p, rules).get(A).get(Behavior.Check.VELOCITY);
-        check("C: честный отлёт не срабатывает", hc.checked() == 6 && hc.cases().isEmpty() && !hc.flagged());
-        check("C: нет отлёта срабатывает", cc.checked() == 6 && cc.cases().size() == 6 && cc.flagged() && near(cc.cases().get(0).value(), 0, 1e-9));
+        check("C: честный отлёт не срабатывает", hc.checked() == 8 && hc.cases().isEmpty() && !hc.flagged());
+        check("C: нет отлёта срабатывает", cc.checked() == 8 && cc.cases().size() == 8 && cc.flagged() && near(cc.cases().get(0).value(), 0, 1e-9));
         ServerProfiles empty = new ServerProfiles();
         empty.put(ServerProfile.create("kb.net", ServerProfile.Preset.VANILLA, ServerProfile.Origin.AUTO, s, 1));
         Behavior.Result nk = Behavior.analyze(cheat, p, Rules.of(cheat, empty, s)).get(A).get(Behavior.Check.VELOCITY);
@@ -740,7 +857,28 @@ public final class CoreTests {
         List<Event> lagC = new ArrayList<>();
         for (Event e : cheat) if (!(e instanceof OtherStateEvent o) || o.t() < 1000) lagC.add(e);
         Behavior.Result lc = Behavior.analyze(lagC, p, rules).get(A).get(Behavior.Check.VELOCITY);
-        check("C: лаг (нет позиций противника) не срабатывает", lc.cases().isEmpty() && lc.skipped() == 6);
+        check("C: лаг (нет позиций противника) не срабатывает", lc.cases().isEmpty() && lc.skipped() == 8);
+        List<Event> jr = new ArrayList<>(), run = new ArrayList<>();
+        for (Event e : cheat) {
+            if (!(e instanceof OtherStateEvent o)) {
+                jr.add(e);
+                run.add(e);
+                continue;
+            }
+            double y = 64, x = 2;
+            boolean ground = true;
+            for (long h : hitT) {
+                if (o.t() >= h + 100 && o.t() <= h + 400) {
+                    y = 64 + Behavior.rise(Behavior.JUMP_VY, (int) ((o.t() - h - 100) / 50) + 1);
+                    ground = false;
+                }
+                if (o.t() > h - 300 && o.t() <= h) x = 2 + 0.2 * ((h - o.t()) / 50.0);
+            }
+            jr.add(new OtherStateEvent(o.t(), o.tick(), A, 2, y, 0, 90, 0, ground, false, null));
+            run.add(new OtherStateEvent(o.t(), o.tick(), A, x, 64, 0, 90, 0, true, false, null));
+        }
+        check("C: после jump reset противника удар не оценивается", Behavior.analyze(jr, p, rules).get(A).get(Behavior.Check.VELOCITY).checked() == 0);
+        check("C: противник бежал навстречу: удар не оценивается", Behavior.analyze(run, p, rules).get(A).get(Behavior.Check.VELOCITY).checked() == 0);
         check("C: ожидаемый спринт-нокбэк из профиля", near(Behavior.expectedKb(rules, 5000, true), 1.3, 1e-9)
                 && near(Behavior.expectedKb(rules, 5000, false), 0.9, 1e-9));
 
@@ -804,7 +942,7 @@ public final class CoreTests {
         Behavior.Context ctx = Behavior.analyze(lag, p).get(A).context();
         check("контекст: пинг противника и скачки", ctx.oppPingMin() == 40 && ctx.oppPingMax() == 220 && ctx.oppPingJumps() == 2);
         check("контекст: наш пинг и телепорт", ctx.ourPingMin() == 30 && ctx.ourPingMax() == 90 && ctx.teleports().equals(List.of(2550L)));
-        check("пороги C, D, E по умолчанию из ТЗ", p.velMin() == 5 && p.velSharePct() == 70 && p.velPct() == 30 && p.reachMin() == 3
+        check("пороги C, D, E по умолчанию (C: минимум 8 по прогону)", p.velMin() == 8 && p.velSharePct() == 70 && p.velPct() == 30 && p.reachMin() == 3
                 && p.reachSharePct() == 20 && near(p.reachExtra(), 0.3, 1e-9) && p.hbMin() == 3 && near(p.hbExtraDeg(), 10, 1e-9)
                 && s.behaviorParams().equals(p));
     }

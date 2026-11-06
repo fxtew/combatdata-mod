@@ -49,8 +49,8 @@ public final class Settings {
     /** Opponent behaviour checks after a fight; thresholds as in Behavior.Params. */
     public boolean behavior = true;
     public int bhCritMin = 3, bhCritFlatMm = 10, bhKsMin = 5, bhKsSharePct = 80, bhKsRatioPct = 95;
-    public int bhVelMin = 5, bhVelSharePct = 70, bhVelPct = 30, bhReachMin = 3, bhReachSharePct = 20, bhReachExtraCm = 30,
-            bhHbMin = 3, bhHbExtraDeg = 10;
+    public int bhVelMin = 8, bhVelSharePct = 70, bhVelPct = 30, bhReachMin = 3, bhReachSharePct = 20, bhReachExtraCm = 30,
+            bhHbMin = 3, bhHbExtraDeg = 10, bhTimMin = 20, bhTimTopPct = 75, bhJrMin = 15, bhJrPct = 95;
     public boolean recordPositions = true;
     public boolean recordInput = true, recordKnockback = true, recordTaken = true;
     public static final int REC_FULL = 0, REC_LITE = 1, REC_CUSTOM = 2;
@@ -103,7 +103,8 @@ public final class Settings {
 
     public Behavior.Params behaviorParams() {
         return new Behavior.Params(bhCritMin, bhCritFlatMm / 1000.0, Behavior.Params.DEFAULT.critLookMs(), bhKsMin, bhKsSharePct, bhKsRatioPct,
-                bhVelMin, bhVelSharePct, bhVelPct, bhReachMin, bhReachSharePct, bhReachExtraCm / 100.0, bhHbMin, bhHbExtraDeg);
+                bhVelMin, bhVelSharePct, bhVelPct, bhReachMin, bhReachSharePct, bhReachExtraCm / 100.0, bhHbMin, bhHbExtraDeg,
+                bhTimMin, bhTimTopPct, Behavior.Params.DEFAULT.timLateTicks(), bhJrMin, bhJrPct);
     }
 
     public long capacityMs() {
@@ -143,6 +144,10 @@ public final class Settings {
         bhReachExtraCm = Math.max(0, Math.min(200, bhReachExtraCm));
         bhHbMin = Math.max(1, Math.min(20, bhHbMin));
         bhHbExtraDeg = Math.max(0, Math.min(60, bhHbExtraDeg));
+        bhTimMin = Math.max(5, Math.min(200, bhTimMin));
+        bhTimTopPct = Math.max(30, Math.min(100, bhTimTopPct));
+        bhJrMin = Math.max(5, Math.min(200, bhJrMin));
+        bhJrPct = Math.max(30, Math.min(100, bhJrPct));
         fsLayout = fsLayout >= FightSummary.LAYOUT_TWO_LINES && fsLayout <= FightSummary.LAYOUT_COLUMN ? fsLayout : FightSummary.LAYOUT_TWO_LINES;
         fsBgOpacity = Math.max(0, Math.min(100, fsBgOpacity));
         fsDelaySec = Math.max(3, Math.min(30, fsDelaySec));
@@ -233,6 +238,10 @@ public final class Settings {
         bhReachExtraCm = c.bhReachExtraCm;
         bhHbMin = c.bhHbMin;
         bhHbExtraDeg = c.bhHbExtraDeg;
+        bhTimMin = c.bhTimMin;
+        bhTimTopPct = c.bhTimTopPct;
+        bhJrMin = c.bhJrMin;
+        bhJrPct = c.bhJrPct;
         recordPositions = c.recordPositions;
         recordInput = c.recordInput;
         recordKnockback = c.recordKnockback;
@@ -369,6 +378,10 @@ public final class Settings {
         m.put("bhReachExtraCm", bhReachExtraCm);
         m.put("bhHbMin", bhHbMin);
         m.put("bhHbExtraDeg", bhHbExtraDeg);
+        m.put("bhTimMin", bhTimMin);
+        m.put("bhTimTopPct", bhTimTopPct);
+        m.put("bhJrMin", bhJrMin);
+        m.put("bhJrPct", bhJrPct);
         m.put("recordPositions", recordPositions);
         m.put("recordInput", recordInput);
         m.put("recordKnockback", recordKnockback);
@@ -453,6 +466,10 @@ public final class Settings {
         if (m.get("bhReachExtraCm") instanceof Number n) s.bhReachExtraCm = n.intValue();
         if (m.get("bhHbMin") instanceof Number n) s.bhHbMin = n.intValue();
         if (m.get("bhHbExtraDeg") instanceof Number n) s.bhHbExtraDeg = n.intValue();
+        if (m.get("bhTimMin") instanceof Number n) s.bhTimMin = n.intValue();
+        if (m.get("bhTimTopPct") instanceof Number n) s.bhTimTopPct = n.intValue();
+        if (m.get("bhJrMin") instanceof Number n) s.bhJrMin = n.intValue();
+        if (m.get("bhJrPct") instanceof Number n) s.bhJrPct = n.intValue();
         if (m.get("recordPositions") instanceof Boolean b) s.recordPositions = b;
         if (m.get("recordInput") instanceof Boolean b) s.recordInput = b;
         if (m.get("recordKnockback") instanceof Boolean b) s.recordKnockback = b;
