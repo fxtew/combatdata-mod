@@ -46,6 +46,9 @@ public final class Settings {
     public int statPingLimitMs = 150, statMinFightHits = 3;
     public int tradeGapMs = (int) Trades.DEFAULT_GAP_MS;
     public boolean tradeByWeight = false;
+    /** Opponent behaviour checks after a fight; thresholds as in Behavior.Params. */
+    public boolean behavior = true;
+    public int bhCritMin = 3, bhCritFlatMm = 10, bhKsMin = 5, bhKsSharePct = 80, bhKsRatioPct = 95;
     public boolean recordPositions = true;
     public boolean recordInput = true, recordKnockback = true, recordTaken = true;
     public static final int REC_FULL = 0, REC_LITE = 1, REC_CUSTOM = 2;
@@ -96,6 +99,10 @@ public final class Settings {
         return new Trades.Params(tradeGapMs, tradeByWeight);
     }
 
+    public Behavior.Params behaviorParams() {
+        return new Behavior.Params(bhCritMin, bhCritFlatMm / 1000.0, Behavior.Params.DEFAULT.critLookMs(), bhKsMin, bhKsSharePct, bhKsRatioPct);
+    }
+
     public long capacityMs() {
         return bufferMinutes * 60_000L;
     }
@@ -120,6 +127,11 @@ public final class Settings {
         statPingLimitMs = Math.max(MIN_PING_LIMIT, Math.min(MAX_PING_LIMIT, statPingLimitMs));
         statMinFightHits = Math.max(1, Math.min(MAX_FIGHT_HITS, statMinFightHits));
         tradeGapMs = Math.max(500, Math.min(5000, tradeGapMs));
+        bhCritMin = Math.max(1, Math.min(20, bhCritMin));
+        bhCritFlatMm = Math.max(0, Math.min(200, bhCritFlatMm));
+        bhKsMin = Math.max(1, Math.min(50, bhKsMin));
+        bhKsSharePct = Math.max(10, Math.min(100, bhKsSharePct));
+        bhKsRatioPct = Math.max(50, Math.min(150, bhKsRatioPct));
         fsLayout = fsLayout >= FightSummary.LAYOUT_TWO_LINES && fsLayout <= FightSummary.LAYOUT_COLUMN ? fsLayout : FightSummary.LAYOUT_TWO_LINES;
         fsBgOpacity = Math.max(0, Math.min(100, fsBgOpacity));
         fsDelaySec = Math.max(3, Math.min(30, fsDelaySec));
@@ -196,6 +208,12 @@ public final class Settings {
         statMinFightHits = c.statMinFightHits;
         tradeGapMs = c.tradeGapMs;
         tradeByWeight = c.tradeByWeight;
+        behavior = c.behavior;
+        bhCritMin = c.bhCritMin;
+        bhCritFlatMm = c.bhCritFlatMm;
+        bhKsMin = c.bhKsMin;
+        bhKsSharePct = c.bhKsSharePct;
+        bhKsRatioPct = c.bhKsRatioPct;
         recordPositions = c.recordPositions;
         recordInput = c.recordInput;
         recordKnockback = c.recordKnockback;
@@ -318,6 +336,12 @@ public final class Settings {
         m.put("statMinFightHits", statMinFightHits);
         m.put("tradeGapMs", tradeGapMs);
         m.put("tradeByWeight", tradeByWeight);
+        m.put("behavior", behavior);
+        m.put("bhCritMin", bhCritMin);
+        m.put("bhCritFlatMm", bhCritFlatMm);
+        m.put("bhKsMin", bhKsMin);
+        m.put("bhKsSharePct", bhKsSharePct);
+        m.put("bhKsRatioPct", bhKsRatioPct);
         m.put("recordPositions", recordPositions);
         m.put("recordInput", recordInput);
         m.put("recordKnockback", recordKnockback);
@@ -388,6 +412,12 @@ public final class Settings {
         if (m.get("statMinFightHits") instanceof Number n) s.statMinFightHits = n.intValue();
         if (m.get("tradeGapMs") instanceof Number n) s.tradeGapMs = n.intValue();
         if (m.get("tradeByWeight") instanceof Boolean b) s.tradeByWeight = b;
+        if (m.get("behavior") instanceof Boolean b) s.behavior = b;
+        if (m.get("bhCritMin") instanceof Number n) s.bhCritMin = n.intValue();
+        if (m.get("bhCritFlatMm") instanceof Number n) s.bhCritFlatMm = n.intValue();
+        if (m.get("bhKsMin") instanceof Number n) s.bhKsMin = n.intValue();
+        if (m.get("bhKsSharePct") instanceof Number n) s.bhKsSharePct = n.intValue();
+        if (m.get("bhKsRatioPct") instanceof Number n) s.bhKsRatioPct = n.intValue();
         if (m.get("recordPositions") instanceof Boolean b) s.recordPositions = b;
         if (m.get("recordInput") instanceof Boolean b) s.recordInput = b;
         if (m.get("recordKnockback") instanceof Boolean b) s.recordKnockback = b;
