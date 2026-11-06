@@ -117,8 +117,11 @@ final class StatsView {
     /** Sender of a shared recording, null for an own one. */
     private String foreignBy;
 
-    void setForeign(String by) {
+    private boolean fromCode;
+
+    void setForeign(String by, boolean code) {
         foreignBy = by;
+        fromCode = code;
     }
 
     StatsView(MenuScreen menu) {
@@ -2408,8 +2411,9 @@ final class StatsView {
         return y;
     }
 
-    private static int skipped(Ui ui, int w, String what, int x, int y) {
-        String s = t("Не записывалось: «" + what + "» было выключено для этой записи (лёгкая запись). Включить для новых записей: Настройки → Основные → Что записывать.",
+    private int skipped(Ui ui, int w, String what, int x, int y) {
+        String s = fromCode ? t("Нет в коде: «" + what + "» не входит в этот уровень кода. Попросите файл или код «Бой с повтором».",
+                "Not in the code: \"" + what + "\" is not part of this code level. Ask for the file or a \"fight with replay\" code.") : t("Не записывалось: «" + what + "» было выключено для этой записи (лёгкая запись). Включить для новых записей: Настройки → Основные → Что записывать.",
                 "Not recorded: \"" + what + "\" was off for this recording (lite recording). Turn it on for new recordings: Settings → General → What to record.");
         for (String l : ui.wrap(s, w)) {
             ui.text(l, x, y, Theme.MUTED);
