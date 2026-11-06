@@ -26,7 +26,11 @@ final class ViewTab implements Tab {
         live = false;
         entry = e;
         rec = r;
-        stats.setNote(null);
+        String mod = e == null || e.header() == null ? null : e.header().mod();
+        stats.setNote(dev.combatdata.core.Share.newer(mod, Recorder.modVersion())
+                ? t("Запись из более новой версии мода (", "Recorded with a newer mod version (") + mod + t("): часть данных не показана", "): some data is not shown")
+                : null);
+        stats.setForeign(e != null && e.shared() ? e.sharedBy() : null);
         stats.set(r, false);
     }
 
@@ -35,6 +39,7 @@ final class ViewTab implements Tab {
         entry = null;
         rec = null;
         combat = Recorder.hasCombatEvents();
+        stats.setForeign(null);
         stats.set(Recorder.liveCopy(), false);
         lastRefresh = System.currentTimeMillis();
     }
@@ -80,7 +85,7 @@ final class ViewTab implements Tab {
     }
 
     private void recordHeader(Ui ui, int x, int y, int w) {
-        String when = Fmt.when(entry) + " · " + Fmt.clock(rec.durationMs());
+        String when = (entry.shared() ? t("от ", "from ") + entry.sharedBy() + " · " : "") + Fmt.when(entry) + " · " + Fmt.clock(rec.durationMs());
         int ty = Ui.textY(y, 18);
         if (ui.font.width(when) + 60 <= w) {
             ui.textRight(when, x + w, ty, Theme.MUTED);

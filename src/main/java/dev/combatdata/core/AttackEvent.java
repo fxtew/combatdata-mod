@@ -62,6 +62,12 @@ public record AttackEvent(long t, int tick, UUID target, String targetName, Outc
                 targetVertBps, turnDps);
     }
 
+    public AttackEvent withTarget(UUID id, String name) {
+        return new AttackEvent(t, tick, id, name, outcome, type, flags, strength, reach, aimTotalDeg, aimYawDeg,
+                aimPitchDeg, hitU, hitV, pingMs, clickT, rayDist, range, selfTowardBps, targetAwayBps, targetPingMs,
+                cooldownTicks, item, weapon, team, targetSideBps, targetVertBps, turnDps);
+    }
+
     public AttackEvent withOutcome(Outcome o) {
         return new AttackEvent(t, tick, target, targetName, o, type, flags, strength, reach, aimTotalDeg, aimYawDeg,
                 aimPitchDeg, hitU, hitV, pingMs, clickT, rayDist, range, selfTowardBps, targetAwayBps, targetPingMs,

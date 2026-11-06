@@ -102,6 +102,18 @@ public final class MenuScreen extends Screen {
         addWidget(findBox);
         current().onShow();
         if (editBox != null) addWidget(editBox);
+        dev.combatdata.client.Exchange.checkInbox(this::imported);
+    }
+
+    /** Files dragged into the game window while the menu is open (Screen.onFilesDrop, like the resource pack screen). */
+    @Override
+    public void onFilesDrop(List<java.nio.file.Path> files) {
+        dev.combatdata.client.Exchange.importFiles(List.copyOf(files), this::imported);
+    }
+
+    private void imported(dev.combatdata.core.Share.Imported r) {
+        recordings.imported(r);
+        if (!r.files().isEmpty()) switchTab(TabId.RECORDINGS);
     }
 
     private Tab current() {
@@ -482,8 +494,9 @@ public final class MenuScreen extends Screen {
         g.nextStratum();
         ui.layer = 1;
         g.fill(0, 0, width, height, Theme.SCRIM);
-        int mw = Math.min(width - 24, 260);
-        int mh = 30 + modal.lines.size() * 11 + (editBox != null ? 26 : 0) + (modal.error != null ? 12 : 0) + 24;
+        int mw = Math.min(width - 24, modal.width);
+        int bodyH = modal.body == null ? 0 : modal.body.height(mw - 20) + 4;
+        int mh = 30 + modal.lines.size() * 11 + bodyH + (editBox != null ? 26 : 0) + (modal.error != null ? 12 : 0) + 24;
         int mx = (width - mw) / 2, my = (height - mh) / 2;
         Draw.roundBordered(g, mx, my, mw, mh, Theme.R_WINDOW, Theme.BORDER, Theme.WINDOW);
         ui.text(Draw.ellipsize(font, modal.title, mw - 20), mx + 10, my + 10, Theme.TEXT_STRONG);
@@ -491,6 +504,10 @@ public final class MenuScreen extends Screen {
         for (String line : modal.lines) {
             ui.text(Draw.ellipsize(font, line, mw - 20), mx + 10, y, Theme.MUTED);
             y += 11;
+        }
+        if (modal.body != null) {
+            modal.body.render(ui, mx + 10, y + 2, mw - 20);
+            y += bodyH;
         }
         if (editBox != null) {
             editBox.setX(mx + 10);

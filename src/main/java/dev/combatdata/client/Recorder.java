@@ -516,7 +516,7 @@ public final class Recorder {
                 .map(c -> c.getMetadata().getVersion().getFriendlyString()).orElse("26.1.2");
     }
 
-    private static String modVersion() {
+    public static String modVersion() {
         return FabricLoader.getInstance().getModContainer(CombatDataClient.MOD_ID)
                 .map(c -> c.getMetadata().getVersion().getFriendlyString()).orElse("dev");
     }
