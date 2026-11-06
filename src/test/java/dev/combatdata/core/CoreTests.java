@@ -13,6 +13,7 @@ public final class CoreTests {
         bufferClock();
         recordingSwitch();
         opponentData();
+        serverProfiles();
         bufferTrimAndSnapshot();
         geometry();
         threeBlockHit();
@@ -425,6 +426,152 @@ public final class CoreTests {
         b.add(w);
         check("соседи не запускают пересчёт живого буфера", b.version() == v && !b.hasCombatEvents());
         Files.deleteIfExists(f);
+    }
+
+    static void serverProfiles() throws Exception {
+        Settings s = new Settings();
+        check("адрес: регистр, точка в конце, порт по умолчанию", ServerProfiles.normalize(" Play.Example.NET.:25565 ").equals("play.example.net")
+                && ServerProfiles.normalize("mc.test:25570").equals("mc.test:25570") && ServerProfiles.normalize(null).isEmpty());
+
+        ServerProfiles ps = new ServerProfiles();
+        ServerProfile stray = ServerProfile.create("stray.gg", ServerProfile.Preset.VANILLA, ServerProfile.Origin.MANUAL, s, 1);
+        stray.subdomains = true;
+        ServerProfile eu = ServerProfile.create("eu.stray.gg", ServerProfile.Preset.VANILLA, ServerProfile.Origin.AUTO, s, 1);
+        ServerProfile exact = ServerProfile.create("other.net", ServerProfile.Preset.VANILLA, ServerProfile.Origin.AUTO, s, 1);
+        ps.put(stray);
+        ps.put(exact);
+        check("шаблон с поддоменами", ps.find("na.stray.gg") == stray && ps.find("stray.gg") == stray
+                && ps.find("notstray.gg") == null && ps.find("sub.other.net") == null && ps.find("OTHER.net:25565") == exact);
+        ps.put(eu);
+        check("точный адрес важнее шаблона", ps.find("eu.stray.gg") == eu && ps.find("na.stray.gg") == stray);
+        ServerProfile deep = ServerProfile.create("a.stray.gg", ServerProfile.Preset.VANILLA, ServerProfile.Origin.MANUAL, s, 1);
+        deep.subdomains = true;
+        ps.put(deep);
+        check("из шаблонов выбирается самый длинный", ps.find("x.a.stray.gg") == deep && ps.find("x.b.stray.gg") == stray);
+
+        ServerProfile kb = ServerProfile.create("kb.net", ServerProfile.Preset.KB_SYNC, ServerProfile.Origin.AUTO, s, 1);
+        check("пресет KnockbackSync: окно по калибровке, модель KnockbackSync", kb.jrMode == ServerProfile.JrMode.CALIBRATION
+                && kb.kbModel == ServerProfile.KbModel.KB_SYNC);
+        check("калибровки нет: окно из настроек, нужно ещё 15", kb.jumpParams(s).equals(s.jumpParams())
+                && kb.calibrationMissing() == Calibration.MIN_SAMPLES);
+        kb.cal = new ServerProfile.Calibrated(true, 40, 120, 30, 5);
+        check("калибровка есть: её окно", kb.jumpParams(s).lowerMs() == 40 && kb.jumpParams(s).upperMs() == 120
+                && kb.jumpParams(s).preMs() == s.jrPreMs && kb.calibrationMissing() == 0);
+        ServerProfile van = ServerProfile.create("v.net", ServerProfile.Preset.VANILLA, ServerProfile.Origin.AUTO, s, 1);
+        check("пресет Ваниль: как в настройках", van.jrMode == ServerProfile.JrMode.SETTINGS && van.jumpParams(s).equals(s.jumpParams())
+                && van.interpMs(s) == s.interpMs && Double.isNaN(van.oppRange));
+
+        // Visiting: built-in list first, the user's profile wins once it exists.
+        ServerProfiles vs = new ServerProfiles();
+        vs.setBuiltin("{\"schema\":1,\"servers\":[{\"address\":\"known.gg\",\"subdomains\":true,\"preset\":\"KB_SYNC\",\"kbModel\":\"KB_SYNC\",\"jrMode\":\"CALIBRATION\"}]}");
+        ServerProfile v1 = vs.visit("eu.known.gg", s, 1000);
+        check("новый сервер из встроенного списка", v1 != null && v1.preset == ServerProfile.Preset.KB_SYNC
+                && v1.origin == ServerProfile.Origin.BUILTIN && v1.lastSeenMs == 1000 && vs.list().size() == 1);
+        v1.jrMode = ServerProfile.JrMode.MANUAL;
+        ServerProfile v2 = vs.visit("na.known.gg", s, 2000);
+        check("изменения пользователя важнее встроенного списка", v2 == v1 && v2.jrMode == ServerProfile.JrMode.MANUAL
+                && v2.lastSeenMs == 2000 && vs.list().size() == 1);
+        ServerProfile v3 = vs.visit("plain.net", s, 3000);
+        check("неизвестный сервер: Ваниль, создан автоматически", v3.preset == ServerProfile.Preset.VANILLA
+                && v3.origin == ServerProfile.Origin.AUTO && v3.createdMs == 3000 && vs.visit("", s, 1) == null);
+        check("удаление профиля", vs.remove("plain.net") && vs.find("plain.net") == null && !vs.remove("plain.net"));
+
+        // File: round trip, junk entries and damaged fields.
+        Path dir = Files.createTempDirectory("cdsrv");
+        Path f = dir.resolve("combatdata-servers.json");
+        stray.note = "заметка\u0007с управляющим";
+        stray.noRecord = true;
+        stray.interpMs = 150;
+        stray.oppRange = 3.2;
+        stray.kb = new ServerProfile.Knockback(0.8, 0.36, 12, 1.1, 0.4, 9, 0.9, 25, 7);
+        stray.clamp();
+        ps.save(f);
+        ServerProfiles back = ServerProfiles.load(f);
+        ServerProfile sb = back.find("x.stray.gg");
+        check("профили сохраняются и читаются", back.list().size() == ps.list().size() && sb != null && sb.subdomains && sb.noRecord
+                && sb.interpMs == 150 && near(sb.oppRange, 3.2, 1e-9) && sb.kb.sprintN() == 9 && near(sb.kb.normalV(), 0.36, 1e-9)
+                && sb.note.equals("заметка с управляющим"));
+        Files.writeString(f, "{\"schema\":1,\"profiles\":[{\"address\":\"a.com\",\"jrLowerMs\":\"много\",\"jrMode\":\"WHAT\",\"interpMs\":9999,"
+                + "\"oppRange\":-1,\"calibration\":{\"valid\":true,\"lower\":90,\"upper\":10}},5,{\"noaddress\":1},{\"address\":\"A.com\"},"
+                + "{\"address\":\"  \"}]}");
+        ServerProfiles junk = ServerProfiles.load(f);
+        ServerProfile a = junk.find("a.com");
+        check("мусор в файле: битые записи пропущены, поля по умолчанию", junk.list().size() == 1 && a != null
+                && a.jrLowerMs == 0 && a.jrMode == ServerProfile.JrMode.SETTINGS && a.interpMs == 300 && Double.isNaN(a.oppRange)
+                && !a.cal.valid());
+        Files.writeString(f, "{сломано");
+        check("повреждённый файл: пустой список", ServerProfiles.load(f).list().isEmpty()
+                && ServerProfiles.load(dir.resolve("нет.json")).list().isEmpty());
+
+        // A recording with two servers: each part by its own window. The jump is 100 ms after each hit.
+        ServerProfile one = ServerProfile.create("one.net", ServerProfile.Preset.CUSTOM, ServerProfile.Origin.MANUAL, s, 1);
+        one.jrMode = ServerProfile.JrMode.MANUAL;
+        one.jrLowerMs = 50;
+        one.jrUpperMs = 150;
+        ServerProfile two = ServerProfile.create("two.net", ServerProfile.Preset.CUSTOM, ServerProfile.Origin.MANUAL, s, 1);
+        two.jrMode = ServerProfile.JrMode.MANUAL;
+        two.jrLowerMs = 0;
+        two.jrUpperMs = 80;
+        ServerProfiles two2 = new ServerProfiles();
+        two2.put(one);
+        two2.put(two);
+        List<Event> ev = List.of(new SegmentEvent(0, "one.net", "minecraft:overworld", 0), hit(1000, true), new JumpEvent(1100, 0, true, -1),
+                new SegmentEvent(5000, "two.net", "minecraft:overworld", 0), hit(6000, true), new JumpEvent(6100, 0, true, -1),
+                hit(7000, true), new JumpEvent(7100, 0, true, -1));
+        Recording rec = new Recording(1, "me", B, "26.1.2", 0, 10_000, ev);
+        Rules rules = Rules.of(ev, two2, s);
+        check("правила по сегментам", rules.parts().size() == 2 && rules.at(0).profile() == one && rules.at(4999).profile() == one
+                && rules.at(5000).profile() == two && rules.at(-5).profile() == one && rules.main(ev).profile() == two);
+        Stats.Result byServer = Stats.compute(rec, rules, Stats.Filter.ALL, 3.0, StatFilter.NONE, Trades.Params.DEFAULT);
+        check("запись с двумя серверами считается по двум профилям", byServer.jump().success() == 1 && byServer.jump().late() == 2);
+        Stats.Result flat = Stats.compute(rec, JumpResetEvaluator.Params.DEFAULT, Stats.Filter.ALL, 3.0, 100, StatFilter.NONE,
+                Trades.Params.DEFAULT);
+        check("без профилей как раньше", flat.jump().success() == 0 && flat.jump().late() == 3);
+        String key1 = Progress.cacheKey(StatFilter.NONE, s, two2, 1500);
+        Progress.Summary sum1 = Progress.summarize("f", rec, Rules.of(ev, two2, s), StatFilter.NONE, 1500, false);
+        two.jrUpperMs = 150;
+        two.clamp();
+        String key2 = Progress.cacheKey(StatFilter.NONE, s, two2, 1500);
+        Progress.Summary sum2 = Progress.summarize("f", rec, Rules.of(ev, two2, s), StatFilter.NONE, 1500, false);
+        check("изменение профиля пересчитывает старые записи", !key1.equals(key2)
+                && Progress.Metric.JR_SUCCESS.value(sum1.all()) < Progress.Metric.JR_SUCCESS.value(sum2.all()));
+        two2.visit("two.net", s, 99_999);
+        check("заход на сервер не сбрасывает кэш", key2.equals(Progress.cacheKey(StatFilter.NONE, s, two2, 1500)));
+        Rules none = Rules.of(List.of(hit(10, true)), two2, s);
+        check("запись без сегментов: настройки", none.parts().size() == 1 && none.at(10).profile() == null
+                && none.at(10).jump().equals(s.jumpParams()));
+        check("запись с неизвестного сервера: настройки", Rules.of(List.of(new SegmentEvent(0, "nope.net", "d", 0)), two2, s)
+                .at(0).profile() == null);
+
+        // Opponent range from the profile: 3 block hit against a longer reach.
+        AttackEvent chase = tb(2.9, 3, 0, 50, 50, 3.0);
+        check("дальность противника из профиля", ThreeBlockHit.is(chase, 100, Double.NaN) && !ThreeBlockHit.is(chase, 100, 4.0)
+                && ThreeBlockHit.is(chase, 100, 3.0));
+
+        // Measured knockback: only this server's parts, sprint split from opponent data, rise from positions.
+        List<Event> kev = new ArrayList<>();
+        kev.add(new SegmentEvent(0, "one.net", "d", 0));
+        for (int i = 0; i < 4; i++) {
+            long t = 1000 + i * 2000L;
+            boolean sprint = i % 2 == 0;
+            kev.add(new OtherStateEvent(t - 50, 0, A, 0, 64, 0, 0, 0, true, sprint, null));
+            kev.add(new PositionEvent(t - 10, 0, 0, 64, 0, 0, List.of()));
+            kev.add(new IncomingHitEvent(t, 0, A, "Alpha", true, false, true, 40, sprint ? 1.2 : 0.8));
+            kev.add(new PositionEvent(t + 200, 0, 0, 64.4, 0, 0, List.of()));
+        }
+        kev.add(new SegmentEvent(9000, "two.net", "d", 0));
+        kev.add(new IncomingHitEvent(9500, 0, A, "Alpha", true, false, true, 40, 5.0));
+        kev.add(new IncomingHitEvent(9900, 0, B, "Beta", true, false, true, 40, 1.0));
+        ServerCalibration sc = new ServerCalibration(one, two2, s);
+        sc.add(new Recording(1, "me", B, "26.1.2", 0, 12_000, kev), StatFilter.NONE);
+        ServerCalibration.Result kr = sc.build(77);
+        check("нокбэк сервера: только его части, обычный и спринт", kr.recordings() == 1 && kr.kb().allN() == 4
+                && near(kr.kb().allH(), 1.0, 1e-9) && kr.kb().sprintN() == 2 && near(kr.kb().sprintH(), 1.2, 1e-9)
+                && kr.kb().normalN() == 2 && near(kr.kb().normalH(), 0.8, 1e-9) && near(kr.kb().normalV(), 0.4, 1e-9)
+                && kr.kb().updatedMs() == 77);
+        ServerCalibration.apply(one, kr, 88);
+        check("мало попыток: калибровка не найдена, но число сохранено", !one.cal.valid() && one.cal.updatedMs() == 88
+                && one.kb.allN() == 4);
     }
 
     static void bufferTrimAndSnapshot() {

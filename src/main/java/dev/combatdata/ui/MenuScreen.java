@@ -194,7 +194,7 @@ public final class MenuScreen extends Screen {
         modal = m;
         if (m.input != null) {
             editBox = new EditBox(font, 0, 0, 200, 18, Component.empty());
-            editBox.setMaxLength(64);
+            editBox.setMaxLength(m.maxLength);
             editBox.setValue(m.input);
             addWidget(editBox);
             setFocused(editBox);

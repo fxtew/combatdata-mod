@@ -18,20 +18,21 @@ import java.util.List;
 final class SettingsTab implements Tab {
     private static String[] sections() {
         return dev.combatdata.core.Lang.english()
-                ? new String[]{"General", "HUD", "Stat filters", "Appearance", "Advanced"}
-                : new String[]{"Основные", "HUD", "Фильтры статистики", "Оформление", "Дополнительно"};
+                ? new String[]{"General", "HUD", "Stat filters", "Appearance", "Advanced", "Servers"}
+                : new String[]{"Основные", "HUD", "Фильтры статистики", "Оформление", "Дополнительно", "Серверы"};
     }
 
     private static String[] sectionsShort() {
         return dev.combatdata.core.Lang.english()
-                ? new String[]{"General", "HUD", "Filters", "Look", "Advanced"}
-                : new String[]{"Основные", "HUD", "Фильтры", "Вид", "Дополн."};
+                ? new String[]{"General", "HUD", "Filters", "Look", "Advanced", "Servers"}
+                : new String[]{"Основные", "HUD", "Фильтры", "Вид", "Дополн.", "Серверы"};
     }
 
-    private static final int APPEARANCE = 3;
+    private static final int APPEARANCE = 3, SERVERS = 5;
     private static final int[] PRESETS = {5, 10, 20, 30, 60};
     private static final Settings DEF = new Settings();
     private final MenuScreen menu;
+    private final ServersPanel servers;
     private Settings draft;
     private int section;
     private double scroll;
@@ -40,6 +41,7 @@ final class SettingsTab implements Tab {
 
     SettingsTab(MenuScreen menu) {
         this.menu = menu;
+        this.servers = new ServersPanel(menu);
     }
 
     private static Settings live() {
@@ -123,6 +125,7 @@ final class SettingsTab implements Tab {
             case 1 -> hud(ui, x, top, w);
             case 2 -> filters(ui, x, top, w);
             case APPEARANCE -> appearance(ui, x, top, w);
+            case SERVERS -> servers.render(ui, x, top, w);
             default -> advanced(ui, x, top, w);
         };
     }
@@ -695,7 +698,8 @@ final class SettingsTab implements Tab {
                 t("Прыжок с S без W не попытка jump reset", "A jump with S and no W is not a jump reset attempt"),
                 draft.jrSeparateFlyOut, l.jrSeparateFlyOut, DEF.jrSeparateFlyOut, v -> draft.jrSeparateFlyOut = v);
         y = calibrationRow(ui, x, y, w);
-        ui.text(t("Параметры применяются и к старым записям.", "Settings also apply to old recordings."), x + 10, y + 8, Theme.DIM);
+        ui.text(Draw.ellipsize(ui.font, t("Применяется и к старым записям, если в профиле сервера окно «как в настройках».",
+                "Also applies to old recordings when the server profile uses the window \"as in settings\"."), w - 20), x + 10, y + 8, Theme.DIM);
         return y + 24;
     }
 
@@ -802,7 +806,8 @@ final class SettingsTab implements Tab {
         reset(ui, right - sw - 4, y + 8, draft.interpMs != DEF.interpMs, DEF.interpMs + t(" мс", " ms"), () -> draft.interpMs = DEF.interpMs);
         y += 30;
         ui.text(t("Задержка = (ваш пинг + пинг противника) / 2 + интерполяция.", "Delay = (your ping + opponent ping) / 2 + interpolation."), x + 10, y + 8, Theme.DIM);
-        ui.text(t("Применяется и к старым записям.", "Also applies to old recordings."), x + 10, y + 20, Theme.DIM);
+        ui.text(Draw.ellipsize(ui.font, t("Применяется и к старым записям; у профиля сервера может быть своё значение.",
+                "Also applies to old recordings; a server profile can have its own value."), w - 20), x + 10, y + 20, Theme.DIM);
         return y + 36;
     }
 

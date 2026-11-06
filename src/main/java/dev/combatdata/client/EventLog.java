@@ -53,12 +53,13 @@ public final class EventLog {
     }
 
     private static String threeBlock(AttackEvent a) {
-        int interp = CombatDataClient.settings().interpMs;
+        Rules.Part p = Recorder.liveRules().at(0);
+        int interp = p.interpMs();
         double d = ThreeBlockHit.opponentDistance(a, interp);
         return String.format(Locale.ROOT, ", дальность %.2f, к цели %+.1f, цель от нас %+.1f б/с, пинг цели %s%s",
                 a.range(), a.selfTowardBps(), a.targetAwayBps(), a.targetPingMs() < 0 ? "?" : a.targetPingMs() + " мс",
                 Double.isNaN(d) ? "" : String.format(Locale.ROOT, ", у цели ≈%.2f%s", d,
-                        ThreeBlockHit.is(a, interp) ? " (3 block hit)" : ""));
+                        ThreeBlockHit.is(a, interp, p.oppRange()) ? " (3 block hit)" : ""));
     }
 
     public static String formatTime(long ms) {

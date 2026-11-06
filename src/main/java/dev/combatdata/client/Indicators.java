@@ -5,6 +5,7 @@ import dev.combatdata.core.AttackEvent;
 import dev.combatdata.core.IndicatorConfig;
 import dev.combatdata.core.LiveCombat;
 import dev.combatdata.core.Notes;
+import dev.combatdata.core.Rules;
 import dev.combatdata.core.Settings;
 import dev.combatdata.core.ThreeBlockHit;
 import net.minecraft.client.Minecraft;
@@ -39,8 +40,9 @@ public final class Indicators {
     static void onHit(AttackEvent a) {
         Settings s = CombatDataClient.settings();
         if (s.statFilter().attack(a) != null) return;
-        boolean tb = ThreeBlockHit.is(a, s.interpMs);
-        double opp = ThreeBlockHit.opponentDistance(a, s.interpMs);
+        Rules.Part p = Recorder.liveRules().at(0);
+        boolean tb = ThreeBlockHit.is(a, p.interpMs(), p.oppRange());
+        double opp = ThreeBlockHit.opponentDistance(a, p.interpMs());
         if (LIVE.hit(clock(), a.target(), a.reach(), tb, opp)) play(IndicatorConfig.Kind.THREE_BLOCK, cfg().tbSound);
     }
 
@@ -50,7 +52,7 @@ public final class Indicators {
     }
 
     static void onTaken(boolean held) {
-        LIVE.setParams(CombatDataClient.settings().jumpParams());
+        LIVE.setParams(Recorder.liveRules().at(0).jump());
         verdict(LIVE.taken(clock(), held));
     }
 

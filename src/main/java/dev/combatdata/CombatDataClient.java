@@ -4,6 +4,7 @@ import dev.combatdata.client.RecHud;
 import dev.combatdata.client.Recorder;
 import dev.combatdata.client.Safe;
 import dev.combatdata.core.Settings;
+import dev.combatdata.core.ServerProfiles;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -19,6 +20,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 public final class CombatDataClient implements ClientModInitializer {
@@ -54,9 +57,39 @@ public final class CombatDataClient implements ClientModInitializer {
         }
     }
 
+    private static ServerProfiles profiles = new ServerProfiles();
+
+    public static ServerProfiles profiles() {
+        return profiles;
+    }
+
+    private static Path profilesFile() {
+        return FabricLoader.getInstance().getConfigDir().resolve("combatdata-servers.json");
+    }
+
+    public static void saveProfiles() {
+        profiles.changed();
+        try {
+            profiles.save(profilesFile());
+        } catch (IOException e) {
+            LOG.error("[CD] не удалось сохранить профили серверов", e);
+        }
+    }
+
+    /** The built-in list of known servers ships inside the jar; nothing is downloaded. */
+    private static void loadProfiles() {
+        profiles = ServerProfiles.load(profilesFile());
+        try (InputStream in = CombatDataClient.class.getResourceAsStream("/assets/combatdata/servers.json")) {
+            if (in != null) profiles.setBuiltin(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            LOG.warn("[CD] встроенный список серверов не читается", e);
+        }
+    }
+
     @Override
     public void onInitializeClient() {
         settings = Settings.load(configFile());
+        loadProfiles();
         Recorder.init(settings);
         saveSettings();
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "main"));
