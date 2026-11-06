@@ -34,6 +34,7 @@ public final class CoreTests {
         statFilters();
         progress();
         compare();
+        share();
         trades();
         wtap();
         taken();
@@ -1804,6 +1805,87 @@ public final class CoreTests {
                 && sv[0].sources().equals(List.of(mid)));
         Compare.Side[] nm = Compare.norm(all, mid, 10, "norm");
         check("сравнение: запись против нормы из прошлых", nm[0].sources().size() == 2 && nm[1].sources().equals(List.of(mid)));
+    }
+
+    static void share() throws Exception {
+        UUID me = UUID.fromString("00000000-0000-0000-0000-00000000000c");
+        List<Event> ev = new ArrayList<>();
+        ev.add(new SegmentEvent(0, "play.example.net", "minecraft:overworld", 1_000_000));
+        ev.add(new OtherStateEvent(500, 10, A, 1, 64, 0, 0, 0, true, false, null));
+        ev.add(new PositionEvent(600, 12, 0, 64, 0, 0, List.of(new PositionEvent.Other(A, 1, 64, 0, 0), new PositionEvent.Other(B, 3, 64, 0, 0))));
+        ev.add(atk(1000, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+        ev.add(new IncomingHitEvent(2000, 40, B, "Beta", true, false, true, 40));
+        ev.add(atk(30_000, A, Outcome.MISS, 3.5, 1f));
+        ev.add(new OtherAnimEvent(30_010, 600, A, OtherAnimEvent.Anim.SWING));
+        Recording r = new Recording(1, "Me", me, "26.1.2", 1_000_000, 40_000, ev);
+        String opp = Lang.t("Противник ", "Opponent ");
+
+        Recording an = Share.prepare(r, Share.Options.DEFAULT);
+        boolean noReal = an.events().stream().noneMatch(e -> e.toString().contains(A.toString()) || e.toString().contains(B.toString())
+                || e.toString().contains("Alpha") || e.toString().contains("Beta"));
+        AttackEvent a0 = (AttackEvent) an.events().stream().filter(e -> e instanceof AttackEvent).findFirst().orElseThrow();
+        IncomingHitEvent h0 = (IncomingHitEvent) an.events().stream().filter(e -> e instanceof IncomingHitEvent).findFirst().orElseThrow();
+        PositionEvent p0 = (PositionEvent) an.events().stream().filter(e -> e instanceof PositionEvent).findFirst().orElseThrow();
+        check("обмен: противники обезличены одинаково во всех событиях", noReal && a0.targetName().equals(opp + 1)
+                && h0.attackerName().equals(opp + 2) && p0.others().get(0).id().equals(a0.target())
+                && p0.others().get(1).id().equals(h0.attacker()) && an.player().equals("Me") && an.playerUuid().equals(me));
+        check("обмен: без разбора противников их состояния не попадают", an.events().stream().noneMatch(e -> e instanceof OtherStateEvent || e instanceof OtherAnimEvent)
+                && Share.prepare(r, new Share.Options(false, 0, 0, true, false, false, true)).events().stream().anyMatch(e -> e instanceof OtherAnimEvent));
+        Recording hid = Share.prepare(r, new Share.Options(false, 0, 0, false, true, true, true));
+        SegmentEvent sg = (SegmentEvent) hid.events().get(0);
+        check("обмен: скрыть сервер и свой ник", !sg.server().contains("example") && !hid.player().equals("Me") && !me.equals(hid.playerUuid())
+                && hid.events().stream().anyMatch(e -> e instanceof AttackEvent x && A.equals(x.target())));
+        Recording one = Share.prepare(r, new Share.Options(true, 28_000, 30_010, true, false, false, true));
+        check("обмен: один бой со сдвигом времени и сервером", one.events().size() == 3 && one.events().get(0) instanceof SegmentEvent s0
+                && s0.t() == 0 && "play.example.net".equals(s0.server()) && one.events().get(1).t() == 30_000 - 25_000
+                && one.wallStartMs() == 1_000_000 + 25_000 && one.durationMs() == 8_010);
+
+        Path root = Files.createTempDirectory("cdshare");
+        Path exports = root.resolve("exports"), shared = root.resolve("shared");
+        Share sh = new Share("Me", true, false, false, false, false, 123, "0.2.0");
+        Path f1 = Share.exportOne(exports, "fight", an, sh, "0.2.0");
+        Cdrec.Header hh = Cdrec.readHeader(f1);
+        check("обмен: поле share в заголовке", sh.equals(hh.share()) && Share.sender(hh).equals("Me") && Cdrec.read(f1).events().size() == an.events().size()
+                && Share.exportOne(exports, "fight", an, sh, "0.2.0").getFileName().toString().equals("fight (2).cdrec"));
+        Share anon = new Share(null, true, false, true, false, false, 1, "0.2.0");
+        Path zip = Share.exportZip(exports, "pack", List.of(new Share.Named("a", an), new Share.Named("a", hid)), anon, "0.2.0");
+        Share.Imported im = Share.importFiles(List.of(zip), shared);
+        Path anonDir = shared.resolve(Share.clean(Lang.t("аноним", "anonymous")));
+        check("обмен: архив импортируется в папку отправителя", im.files().size() == 2 && im.errors().isEmpty()
+                && im.files().stream().allMatch(p -> p.getParent().equals(anonDir)));
+        Share.Imported again = Share.importFiles(List.of(zip, f1), shared);
+        check("обмен: повторный импорт пропускается, одиночный файл — в папку по нику", again.duplicates() == 2 && again.files().size() == 1
+                && again.files().get(0).getParent().equals(shared.resolve("Me")));
+        // A broken archive: wrong SHA-256 in the manifest and an entry trying to leave the folder.
+        Path bad = root.resolve("bad.zip");
+        try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(bad))) {
+            out.putNextEntry(new java.util.zip.ZipEntry(Share.MANIFEST));
+            out.write("{\"files\":[{\"name\":\"x.cdrec\",\"sha256\":\"00\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("x.cdrec"));
+            Files.copy(f1, out);
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("../../evil.cdrec"));
+            Files.copy(f1, out);
+            out.closeEntry();
+        }
+        Path other = root.resolve("other");
+        Share.Imported bi = Share.importFiles(List.of(bad), other);
+        check("обмен: повреждённый файл отклонён, путь из архива не выходит из папки", bi.errors().size() == 1 && bi.files().size() == 1
+                && bi.files().get(0).startsWith(other) && !Files.exists(root.resolve("evil.cdrec")));
+        Path txt = root.resolve("note.txt");
+        Files.writeString(txt, "hi");
+        Path fake = root.resolve("fake.cdrec");
+        Files.writeString(fake, "not gzip");
+        Share.Imported ti = Share.importFiles(List.of(txt, fake), other);
+        check("обмен: чужие файлы не импортируются", ti.files().isEmpty() && ti.errors().size() == 2);
+        Path own = root.resolve("own.cdrec");
+        Cdrec.write(own, r, "0.2.0");
+        check("обмен: без поля share отправитель — игрок записи", Share.sender(Cdrec.readHeader(own)).equals("Me")
+                && Cdrec.readHeader(own).share() == null);
+        check("обмен: более новая версия мода", Share.newer("0.3.0+26.1.2", "0.2.9+26.2") && !Share.newer("0.2.0", "0.2.0+1.21.11")
+                && !Share.newer("dev", "0.2.0") && !Share.newer(null, "0.2.0") && Share.newer("1.0", "0.9.9") && Cdrec.readHeader(f1).mod().equals("0.2.0"));
+        Share.deleteTree(root);
     }
 
     static void progress() throws Exception {

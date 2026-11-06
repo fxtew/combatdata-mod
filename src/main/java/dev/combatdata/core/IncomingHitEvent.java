@@ -57,6 +57,12 @@ public record IncomingHitEvent(long t, int tick, UUID attacker, String attackerN
         this(t, tick, attacker, attackerName, groundedAtHit, jumpHeld, knockbackApplied, pingMs, Double.NaN);
     }
 
+    public IncomingHitEvent withAttacker(UUID id, String name) {
+        return new IncomingHitEvent(t, tick, id, name, groundedAtHit, jumpHeld, knockbackApplied, pingMs, kbAway, kind,
+                projectile, attackerWeapon, attackerItem, team, reach, range, attackerTowardBps, selfAwayBps, attackerPingMs,
+                attackerCrit);
+    }
+
     @Override
     public Event withT(long newT) {
         return new IncomingHitEvent(newT, tick, attacker, attackerName, groundedAtHit, jumpHeld, knockbackApplied, pingMs,

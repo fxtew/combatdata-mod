@@ -888,7 +888,7 @@ final class SettingsTab implements Tab {
         if (!storageLoading && (storageList == null || (storageReloadAt > 0 && now >= storageReloadAt))) {
             storageLoading = true;
             storageReloadAt = 0;
-            Recordings.listAsync(list -> {
+            Recordings.listOwnAsync(list -> {
                 storageList = list;
                 storageLoading = false;
             });

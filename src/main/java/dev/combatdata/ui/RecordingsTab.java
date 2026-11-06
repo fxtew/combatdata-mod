@@ -35,6 +35,9 @@ final class RecordingsTab implements Tab {
     }
     private static RecordingQuery.Sort sort = RecordingQuery.Sort.NEWEST;
     private static boolean favoritesOnly;
+    /** Whose recordings to list: own, shared by others, or both. */
+    private enum Owner { ALL, MINE, SHARED }
+    private static Owner owner = Owner.ALL;
     static String query = "";
 
     private final MenuScreen menu;
@@ -91,9 +94,11 @@ final class RecordingsTab implements Tab {
         List<RecordingQuery.Item> items = new ArrayList<>();
         for (int i = 0; i < entries.size(); i++) {
             Recordings.Entry e = entries.get(i);
+            if (owner == Owner.MINE && e.shared() || owner == Owner.SHARED && !e.shared()) continue;
             var h = e.header();
             String text = e.stem() + " " + Fmt.title(e) + " " + Fmt.when(e)
-                    + (h == null ? "" : " " + String.join(" ", h.servers()) + " " + String.join(" ", h.opponents()) + " " + h.player());
+                    + (h == null ? "" : " " + String.join(" ", h.servers()) + " " + String.join(" ", h.opponents()) + " " + h.player())
+                    + (e.shared() ? " " + e.sharedBy() : "");
             items.add(new RecordingQuery.Item(i, Fmt.title(e), text, e.time(), h == null ? 0 : h.durationMs(),
                     h == null ? 0 : h.hitsConfirmed(), h == null ? 0 : h.attacks(), e.size(), Recordings.favorite(e), h == null));
         }
@@ -121,10 +126,27 @@ final class RecordingsTab implements Tab {
         int bw = narrow ? 18 : ui.buttonWidth(refreshL);
         bx -= bw;
         ui.button(bx, y, bw, 16, refreshL, Ui.Kind.GHOST, true, this::refresh);
-        String folderL = narrow ? t("Папка", "Folder") : t("Открыть папку", "Open folder");
+        boolean inbox = owner == Owner.SHARED;
+        String folderL = inbox ? (narrow ? t("Импорт", "Import") : t("Папка импорта", "Import folder"))
+                : narrow ? t("Папка", "Folder") : t("Открыть папку", "Open folder");
         bw = ui.buttonWidth(folderL);
         bx -= bw + 4;
-        ui.button(bx, y, bw, 16, folderL, Ui.Kind.GHOST, true, this::openFolder);
+        ui.button(bx, y, bw, 16, folderL, Ui.Kind.GHOST, true, inbox ? dev.combatdata.client.Exchange::openInbox : this::openFolder);
+        if (inbox && ui.hover(bx, y, bw, 16)) ui.tip(t("Положите сюда .cdrec или .zip: мод заберёт их при открытии меню. Можно и просто перетащить файлы в окно игры.",
+                "Put .cdrec or .zip files here: the mod picks them up when the menu opens. Or just drag files into the game window."));
+        String ownL = switch (owner) {
+            case ALL -> t("Все", "All");
+            case MINE -> t("Мои", "Mine");
+            case SHARED -> t("Чужие", "Shared");
+        } + " ▾";
+        bw = ui.buttonWidth(ownL);
+        bx -= bw + 4;
+        ui.button(bx, y, bw, 16, ownL, owner == Owner.ALL ? Ui.Kind.SECONDARY : Ui.Kind.PRIMARY, true, () -> {
+            owner = Owner.values()[(owner.ordinal() + 1) % Owner.values().length];
+            scroll = 0;
+            rebuild();
+        });
+        if (ui.hover(bx, y, bw, 16)) ui.tip(t("Все → мои → чужие (присланные другими)", "All → mine → shared (sent by others)"));
         String sortL = (narrow ? sortShort() : sortNames())[sort.ordinal()] + " ▾";
         bw = ui.buttonWidth(sortL);
         bx -= bw + 4;
@@ -150,6 +172,10 @@ final class RecordingsTab implements Tab {
         listH = lh - 3 - ROW;
         if (entries.isEmpty() && loading) {
             ui.textCenter(t("Загрузка…", "Loading…"), x + w / 2, ly + lh / 2 - 4, Theme.MUTED);
+        } else if (shown.isEmpty() && owner == Owner.SHARED && query.isBlank() && !favoritesOnly) {
+            ui.textCenter(t("Чужих записей нет", "No shared recordings"), x + w / 2, ly + lh / 2 - 10, Theme.MUTED);
+            ui.textCenter(Draw.ellipsize(ui.font, t("Перетащите .cdrec или .zip в окно игры или положите в папку импорта", "Drag a .cdrec or .zip into the game window or put it in the import folder"), w - 16),
+                    x + w / 2, ly + lh / 2 + 2, Theme.DIM);
         } else if (entries.isEmpty()) {
             ui.textCenter(t("Записей пока нет", "No recordings yet"), x + w / 2, ly + lh / 2 - 10, Theme.MUTED);
             ui.textCenter(t("Бои сохраняются сами, F9 сохраняет буфер вручную", "Fights are saved automatically, F9 saves the buffer manually"), x + w / 2, ly + lh / 2 + 2, Theme.DIM);
@@ -177,7 +203,8 @@ final class RecordingsTab implements Tab {
             ui.textRight(when, listX + listW - 12, ry + 4, Theme.MUTED);
             String lite = e.header() != null && e.header().notRecorded() != 0 ? t("лёгкая", "lite") : null;
             int liteW = lite == null ? 0 : ui.font.width(lite) + 8;
-            ui.text(Draw.ellipsize(ui.font, Fmt.meta(e), listW - 40 - sizeW - liteW), listX + 20, ry + 14, Theme.MUTED);
+            String meta = e.shared() ? t("от ", "from ") + e.sharedBy() + " · " + Fmt.meta(e) : Fmt.meta(e);
+            ui.text(Draw.ellipsize(ui.font, meta, listW - 40 - sizeW - liteW), listX + 20, ry + 14, e.shared() ? Theme.ACCENT : Theme.MUTED);
             if (lite != null) ui.textRight(lite, listX + listW - 12 - sizeW - 8, ry + 14, Theme.ACCENT);
             ui.textRight(size, listX + listW - 12, ry + 14, Theme.DIM);
             Path file = e.file();
@@ -216,6 +243,11 @@ final class RecordingsTab implements Tab {
         bx -= bw + 4;
         if (liveSelected) ui.button(bx, fy, bw, 16, deleteL, Ui.Kind.DANGER, true, () -> menu.confirmReset(null));
         else ui.button(bx, fy, bw, 16, deleteL, Ui.Kind.DANGER, sel != null, this::delete);
+        String shareL = t("Поделиться", "Share");
+        bw = ui.buttonWidth(shareL);
+        bx -= bw + 4;
+        boolean canShare = sel != null && sel.header() != null;
+        ui.button(bx, fy, bw, 16, shareL, Ui.Kind.SECONDARY, canShare, () -> share(List.of(sel)));
         String pickL = t("Выбрать", "Select");
         bw = ui.buttonWidth(pickL);
         bx -= bw + 4;
@@ -231,6 +263,20 @@ final class RecordingsTab implements Tab {
         ui.text(Draw.ellipsize(ui.font, left, bx - x - 8), x, Ui.textY(fy, 16), leftColor);
 
         if (sortOpen) sortMenu(ui, sortX, y + 18, sortW);
+    }
+
+    private void share(List<Recordings.Entry> list) {
+        ShareDialog.open(menu, list, this::setStatus);
+    }
+
+    /** After a drop or the import folder: the result in the status line, the shared recordings shown. */
+    void imported(dev.combatdata.core.Share.Imported r) {
+        setStatus(dev.combatdata.client.Exchange.summary(r), r.errors().isEmpty() ? Theme.GREEN : r.files().isEmpty() ? Theme.RED : Theme.AMBER);
+        if (!r.files().isEmpty()) {
+            owner = Owner.SHARED;
+            scroll = 0;
+        }
+        refresh();
     }
 
     private static void star(Ui ui, int x, int y, int w, int h, boolean on, boolean box, Runnable action) {
@@ -434,13 +480,22 @@ final class RecordingsTab implements Tab {
         String cmpL = t("Сравнить", "Compare");
         bw = ui.buttonWidth(cmpL);
         bx -= bw + 4;
-        boolean two = picked.size() == 2 && picked.get(0).header() != null && picked.get(1).header() != null;
+        boolean two = picked.size() == 2 && picked.get(0).header() != null && picked.get(1).header() != null
+                && !picked.get(0).shared() && !picked.get(1).shared();
         ui.button(bx, fy, bw, 16, cmpL, Ui.Kind.PRIMARY, two, () -> {
             String a = picked.get(0).file().getFileName().toString(), b = picked.get(1).file().getFileName().toString();
             cancelSelection();
             menu.compareRecordings(a, b);
         });
-        if (ui.hover(bx, fy, bw, 16) && !two) ui.tip(t("Отметьте ровно две записи", "Tick exactly two recordings"));
+        if (ui.hover(bx, fy, bw, 16) && !two) ui.tip(t("Отметьте ровно две свои записи", "Tick exactly two of your recordings"));
+        String shL = t("Поделиться", "Share");
+        bw = ui.buttonWidth(shL);
+        bx -= bw + 4;
+        List<Recordings.Entry> readable = picked.stream().filter(p -> p.header() != null).toList();
+        ui.button(bx, fy, bw, 16, shL, Ui.Kind.SECONDARY, !readable.isEmpty(), () -> {
+            cancelSelection();
+            share(readable);
+        });
         bw = ui.buttonWidth(allL);
         bx -= bw + 4;
         ui.button(bx, fy, bw, 16, allL, Ui.Kind.GHOST, !shown.isEmpty(), () -> {

@@ -16,6 +16,12 @@ statistics and charts in game. It only observes: nothing is sent over the networ
   attack charge, jump reset timing and 3 block hits (with note block sounds), session totals. They show only
   your own data about what already happened.
 - Fight summary card on the HUD, themes, Russian and English interface, search across the menu (Ctrl+F).
+- Comparison of your recordings or periods (last 7 days against the 7 before, one server against the rest,
+  the latest recording against your norm), with intervals that tell real changes from chance.
+- Sharing: Recordings → Share saves a recording (or one fight, or several as a .zip) to `combatdata/exports`,
+  with opponent names hidden by default. To open a friend's file, drag the `.cdrec` or `.zip` into the game window
+  with the menu open, or put it in `combatdata/inbox`. Shared recordings live in `combatdata/shared/<sender>` and
+  never count towards your own progress.
 - Works with VulkanMod: everything is drawn with standard GUI fills and text.
 
 ## Controls

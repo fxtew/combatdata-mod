@@ -114,6 +114,12 @@ final class StatsView {
     /** A profile chosen to view the whole recording "as if on that server"; null rates each part by its own server. */
     private ServerProfile viewAs;
     private Map<UUID, Behavior.Report> behavior = Map.of();
+    /** Sender of a shared recording, null for an own one. */
+    private String foreignBy;
+
+    void setForeign(String by) {
+        foreignBy = by;
+    }
 
     StatsView(MenuScreen menu) {
         this.menu = menu;
@@ -1071,6 +1077,10 @@ final class StatsView {
     }
 
     private int insightsBlock(Ui ui, int x, int y, int w) {
+        if (foreignBy != null) {
+            line(ui, w, t("Чужая запись (от ", "Shared recording (from ") + foreignBy + t("): выводы о вас по ней не строятся", "): no insights about you from it"), x, y, Theme.DIM);
+            return y + LINE + 6;
+        }
         if (insights.isEmpty()) {
             if (res.hits().confirmed() + res.hits().misses() + res.combo().taken() == 0) return y;
             line(ui, w, t("Выводы: явных проблем не найдено", "Insights: no obvious problems found"), x, y, Theme.DIM);
