@@ -31,6 +31,8 @@ final class ProgressTab implements Tab {
     private List<Progress.Point> points = List.of();
     private List<Item> servers = List.of();
     private List<Item> opponents = List.of();
+    private boolean comparing;
+    private final CompareView compare = new CompareView();
 
     ProgressTab(MenuScreen menu) {
         this.menu = menu;
@@ -141,6 +143,12 @@ final class ProgressTab implements Tab {
     private int popX, popY, popW, popH;
     private static final int ROW = 13;
 
+    /** From Recordings: compare these two files. */
+    void compareFiles(String a, String b) {
+        comparing = true;
+        compare.files(a, b);
+    }
+
     void setOppQuery(String q) {
         query = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);
         popScroll = 0;
@@ -171,7 +179,7 @@ final class ProgressTab implements Tab {
 
     @Override
     public boolean scrolled(double mx, double my, double dy) {
-        if (open == null) return false;
+        if (open == null) return comparing && compare.scrolled(mx, my, dy);
         if (mx >= popX && mx < popX + popW && my >= popY && my < popY + popH) {
             popScroll = Math.max(0, Math.min(popScroll - dy * ROW * 2, popMax));
         }
@@ -254,6 +262,10 @@ final class ProgressTab implements Tab {
         String head = summaryLine(snap);
         String st = ProgressData.status();
         if (st != null) head = t("Пересчёт ", "Updating ") + st + " · " + head;
+        if (comparing) {
+            compare.render(ui, snap, server, x, top, w, ph);
+            return;
+        }
         if (error != null) head = error;
         ui.text(Draw.ellipsize(ui.font, head, w), x, top, error != null ? Theme.RED : Theme.MUTED);
         top += 12;
@@ -288,6 +300,17 @@ final class ProgressTab implements Tab {
 
     private int controls(Ui ui, int x, int y, int w) {
         Flow f = new Flow(x, y, w);
+        String[] modes = {t("График", "Chart"), t("Сравнение", "Compare")};
+        int[] mp = f.place(ui.segmentedWidth(modes), false);
+        ui.segmented(mp[0], mp[1], modes, comparing ? 1 : 0, i -> comparing = i == 1);
+        if (comparing) {
+            compare.controls(ui, f, w);
+            pickChip(ui, f, Pick.SERVER, t("Сервер: ", "Server: ") + (server == null ? t("основной", "main") : Draw.ellipsize(ui.font, server, w / 3)),
+                    server != null);
+            int[] ip = f.place(Ui.INFO, false);
+            ui.info(ip[0], ip[1] + 4, Help.compare());
+            return f.bottom();
+        }
         Progress.Metric[] ms = Progress.Metric.values();
         String[] names = new String[ms.length];
         for (int i = 0; i < ms.length; i++) names[i] = metricName(ms[i], false);
