@@ -155,7 +155,7 @@ final class ProgressTab implements Tab {
     }
 
     boolean closePopup() {
-        if (open == null) return false;
+        if (open == null) return comparing && compare.back();
         open = null;
         return true;
     }

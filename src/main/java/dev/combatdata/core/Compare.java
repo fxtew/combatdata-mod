@@ -111,6 +111,18 @@ public final class Compare {
 
     /** Fights of an already filtered event list, with the gap and filter of the statistics. */
     public static List<FightAcc> fights(List<Event> ev, Rules rules, StatFilter sf, Trades.Params tp) {
+        return fights(ev, rules, sf, tp, null);
+    }
+
+    /** Fights with their raw values (for the detail view); keep: fight start times to collect, null for all. */
+    public static List<FightRaw> raw(List<Event> ev, Rules rules, StatFilter sf, Trades.Params tp, Set<Long> keep) {
+        List<FightRaw> out = new ArrayList<>();
+        fights(ev, rules, sf, tp, out);
+        if (keep != null) out.removeIf(f -> !keep.contains(f.acc().startMs()));
+        return out;
+    }
+
+    private static List<FightAcc> fights(List<Event> ev, Rules rules, StatFilter sf, Trades.Params tp, List<FightRaw> rawOut) {
         List<FightAcc> out = new ArrayList<>();
         List<Stats.Fight> fights = Stats.fights(ev, Stats.FIGHT_GAP_MS, sf);
         if (fights.isEmpty()) return out;
@@ -130,19 +142,22 @@ public final class Compare {
                 if (e instanceof SegmentEvent s && e.t() <= f.startMs()) segment = s.server();
             }
             String server = rules.at(f.startMs()).server();
-            out.add(fight(sub, f.startMs(), server != null ? server : segment, rules, sf, tp));
+            Raw raw = rawOut == null ? null : new Raw();
+            FightAcc fa = fight(sub, f.startMs(), server != null ? server : segment, rules, sf, tp, raw);
+            out.add(fa);
+            if (raw != null) rawOut.add(raw.done(fa));
         }
         return out;
     }
 
-    static FightAcc fight(List<Event> ev, long start, String server, Rules rules, StatFilter sf, Trades.Params tp) {
+    static FightAcc fight(List<Event> ev, long start, String server, Rules rules, StatFilter sf, Trades.Params tp, Raw raw) {
         Acc[] acc = new Acc[Metric.values().length];
         Arrays.fill(acc, Acc.ZERO);
         Map<UUID, Integer> opp = new HashMap<>();
         Map<UUID, String> names = new HashMap<>();
         Map<Weapon, Integer> weapons = new EnumMap<>(Weapon.class);
         for (Event e : ev) {
-            if (e instanceof PingEvent p && p.pingMs() > 0) add(acc, Metric.PING, p.pingMs());
+            if (e instanceof PingEvent p && p.pingMs() > 0) add(acc, raw, Metric.PING, p.pingMs());
             if (e instanceof IncomingHitEvent h && h.attacker() != null) {
                 opp.merge(h.attacker(), 1, Integer::sum);
                 if (h.attackerName() != null) names.put(h.attacker(), h.attackerName());
@@ -154,15 +169,16 @@ public final class Compare {
             }
             if (a.weapon() != null) weapons.merge(a.weapon(), 1, Integer::sum);
             boolean hit = a.outcome() == Outcome.HIT_CONFIRMED;
-            add(acc, Metric.HIT_RATE, hit ? 1 : 0);
+            add(acc, raw, Metric.HIT_RATE, hit ? 1 : 0);
             if (!hit) continue;
-            add(acc, Metric.REACH, a.reach());
-            if (!Double.isNaN(a.aimTotalDeg()) && a.reach() >= Stats.MIN_AIM_REACH) add(acc, Metric.AIM_YAW, Math.abs(a.aimYawDeg()));
-            add(acc, Metric.CHARGE, 100.0 * a.strength());
-            add(acc, Metric.SPRINT_HITS, a.type() == HitType.SPRINT ? 1 : 0);
-            add(acc, Metric.CRIT_HITS, a.type() == HitType.CRIT ? 1 : 0);
+            if (raw != null && Double.isFinite(a.hitU()) && Double.isFinite(a.hitV())) raw.aim.add(new double[]{a.hitU(), a.hitV()});
+            add(acc, raw, Metric.REACH, a.reach());
+            if (!Double.isNaN(a.aimTotalDeg()) && a.reach() >= Stats.MIN_AIM_REACH) add(acc, raw, Metric.AIM_YAW, Math.abs(a.aimYawDeg()));
+            add(acc, raw, Metric.CHARGE, 100.0 * a.strength());
+            add(acc, raw, Metric.SPRINT_HITS, a.type() == HitType.SPRINT ? 1 : 0);
+            add(acc, raw, Metric.CRIT_HITS, a.type() == HitType.CRIT ? 1 : 0);
             Rules.Part p = rules.at(a.t());
-            if (ThreeBlockHit.classifiable(a, p.interpMs())) add(acc, Metric.THREE_BLOCK, ThreeBlockHit.is(a, p.interpMs(), p.oppRange()) ? 1 : 0);
+            if (ThreeBlockHit.classifiable(a, p.interpMs())) add(acc, raw, Metric.THREE_BLOCK, ThreeBlockHit.is(a, p.interpMs(), p.oppRange()) ? 1 : 0);
         }
         List<JumpResetEvaluator.Attempt> attempts = JumpResetEvaluator.evaluate(ev, rules);
         boolean excludeHeld = rules.at(start).jump().excludeHeld();
@@ -170,30 +186,54 @@ public final class Compare {
             if (excludeHeld && a.held()) continue;
             switch (a.result()) {
                 case SUCCESS, TOO_EARLY, TOO_LATE -> {
-                    add(acc, Metric.JR_SUCCESS, a.result() == JumpResetEvaluator.Result.SUCCESS ? 1 : 0);
-                    add(acc, Metric.JR_MEAN, a.deltaMs());
-                    add(acc, Metric.FLY_OUT, 0);
+                    add(acc, raw, Metric.JR_SUCCESS, a.result() == JumpResetEvaluator.Result.SUCCESS ? 1 : 0);
+                    add(acc, raw, Metric.JR_MEAN, a.deltaMs());
+                    add(acc, raw, Metric.FLY_OUT, 0);
                 }
-                case FLY_OUT -> add(acc, Metric.FLY_OUT, 1);
+                case FLY_OUT -> add(acc, raw, Metric.FLY_OUT, 1);
                 default -> {
                 }
             }
         }
         WTap.Result wt = WTap.analyze(ev);
-        if (wt.hasInput()) for (int i = 0; i < wt.sprintHits(); i++) add(acc, Metric.WTAP, i < wt.afterReset() ? 1 : 0);
-        for (int len : Stats.comboLengths(ev)) if (len >= 2) add(acc, Metric.COMBO, len);
+        if (wt.hasInput()) for (int i = 0; i < wt.sprintHits(); i++) add(acc, raw, Metric.WTAP, i < wt.afterReset() ? 1 : 0);
+        for (int len : Stats.comboLengths(ev)) if (len >= 2) add(acc, raw, Metric.COMBO, len);
         Trades.Summary ts = Trades.summary(Trades.split(ev, tp, sf, attempts));
         for (int i = 0; i < ts.total(); i++) {
-            add(acc, Metric.FIRST_HIT, i < ts.first() ? 1 : 0);
-            add(acc, Metric.TRADE_WIN, i < ts.wins() ? 1 : 0);
+            add(acc, raw, Metric.FIRST_HIT, i < ts.first() ? 1 : 0);
+            add(acc, raw, Metric.TRADE_WIN, i < ts.wins() ? 1 : 0);
         }
         UUID main = top(opp);
         Weapon w = top(weapons);
         return new FightAcc(start, server, main, main == null ? null : names.get(main), w == null ? Weapon.UNKNOWN : w, acc);
     }
 
-    private static void add(Acc[] acc, Metric m, double v) {
+    private static void add(Acc[] acc, Raw raw, Metric m, double v) {
         acc[m.ordinal()] = acc[m.ordinal()].add(v);
+        if (raw != null) raw.values.get(m.ordinal()).add(v);
+    }
+
+    /** Raw values of one fight while it is computed: by metric ordinal, plus hit points (hitU, hitV). */
+    static final class Raw {
+        final List<List<Double>> values = new ArrayList<>();
+        final List<double[]> aim = new ArrayList<>();
+
+        Raw() {
+            for (int i = 0; i < Metric.values().length; i++) values.add(new ArrayList<>());
+        }
+
+        FightRaw done(FightAcc fa) {
+            double[][] v = new double[values.size()][];
+            for (int i = 0; i < v.length; i++) v[i] = values.get(i).stream().mapToDouble(Double::doubleValue).toArray();
+            return new FightRaw(fa, v, aim.toArray(new double[0][]));
+        }
+    }
+
+    /** A fight with every value behind its sums; aim: points of hits on the target (across, up). */
+    public record FightRaw(FightAcc acc, double[][] values, double[][] aim) {
+        public double[] get(Metric m) {
+            return values[m.source().ordinal()];
+        }
     }
 
     private static <K> K top(Map<K, Integer> m) {
@@ -417,5 +457,89 @@ public final class Compare {
     /** One server (B) against all the others (A). */
     public static Side[] serverVsRest(List<Progress.Summary> all, String server, String labelRest) {
         return new Side[]{side(labelRest, all, f -> !server.equals(f.server())), side(server, all, f -> server.equals(f.server()))};
+    }
+
+    /** Fights with fewer values than this are left out of a per-fight share distribution. */
+    public static final int SHARE_FIGHT_MIN = 3;
+
+    /** One side's values in the detail view. */
+    public record Dist(double[] values, double mean, double median, double sd) {
+        public int n() {
+            return values.length;
+        }
+    }
+
+    public static Dist dist(double[] v) {
+        if (v.length == 0) return new Dist(v, Double.NaN, Double.NaN, Double.NaN);
+        double s = 0, q = 0;
+        for (double x : v) {
+            s += x;
+            q += x * x;
+        }
+        double mean = s / v.length;
+        return new Dist(v, mean, Behavior.median(v), Math.sqrt(Math.max(0, q / v.length - mean * mean)));
+    }
+
+    /**
+     * Values grouped by fight for the detail view: every raw value, or for a share the percent of each fight with at
+     * least SHARE_FIGHT_MIN values (a histogram of zeros and ones says nothing).
+     */
+    public static List<double[]> perFight(Metric m, List<FightRaw> raw) {
+        List<double[]> out = new ArrayList<>();
+        for (FightRaw f : raw) {
+            double[] v = f.get(m);
+            if (m.kind != Kind.SHARE) {
+                if (v.length > 0) out.add(v);
+            } else if (v.length >= SHARE_FIGHT_MIN) {
+                double s = 0;
+                for (double x : v) s += x;
+                out.add(new double[]{100 * s / v.length});
+            }
+        }
+        return out;
+    }
+
+    /** Per-fight shares straight from the sums, without loading events. */
+    public static List<double[]> shares(Metric m, List<FightAcc> fights) {
+        List<double[]> out = new ArrayList<>();
+        for (FightAcc f : fights) {
+            Acc a = f.get(m);
+            if (a.n() >= SHARE_FIGHT_MIN) out.add(new double[]{100 * a.sum() / a.n()});
+        }
+        return out;
+    }
+
+    public static double[] pool(List<double[]> l) {
+        int n = 0;
+        for (double[] v : l) n += v.length;
+        double[] out = new double[n];
+        int i = 0;
+        for (double[] v : l) {
+            System.arraycopy(v, 0, out, i, v.length);
+            i += v.length;
+        }
+        return out;
+    }
+
+    /** Interval of median(B) - median(A), resampling fights; NaN with fewer than MIN_FIGHTS fights on a side. */
+    public static double[] medianDiff(List<double[]> a, List<double[]> b, long seed, int reps, long budgetMs) {
+        if (a.size() < MIN_FIGHTS || b.size() < MIN_FIGHTS) return new double[]{Double.NaN, Double.NaN};
+        Random rnd = new Random(seed);
+        double[] d = new double[reps];
+        int n = 0;
+        long end = System.nanoTime() + budgetMs * 1_000_000L;
+        while (n < reps) {
+            if ((n & 15) == 15 && System.nanoTime() > end) break;
+            d[n++] = Behavior.median(pool(resampleRaw(b, rnd))) - Behavior.median(pool(resampleRaw(a, rnd)));
+        }
+        if (n < 20) return new double[]{Double.NaN, Double.NaN};
+        double[] got = Arrays.copyOf(d, n);
+        return new double[]{quantile(got, 0.025), quantile(got, 0.975)};
+    }
+
+    private static List<double[]> resampleRaw(List<double[]> f, Random rnd) {
+        List<double[]> out = new ArrayList<>(f.size());
+        for (int i = 0; i < f.size(); i++) out.add(f.get(rnd.nextInt(f.size())));
+        return out;
     }
 }
