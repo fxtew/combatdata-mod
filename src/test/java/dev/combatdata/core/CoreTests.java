@@ -1767,6 +1767,24 @@ public final class CoreTests {
                 && f0.get(Compare.Metric.HIT_RATE).sum() == 4 && f0.opponent().equals(A) && f0.weapon() == Weapon.SWORD
                 && "S1".equals(f0.server()) && f1.opponent().equals(B) && f1.weapon() == Weapon.AXE
                 && f0.get(Compare.Metric.PING).n() == 1 && f1.get(Compare.Metric.PING).n() == 0);
+        List<Compare.FightRaw> raw = Compare.raw(progRec(0, "S1", ev).events(), Rules.single(JumpResetEvaluator.Params.DEFAULT, 100),
+                StatFilter.NONE, new Trades.Params(Trades.DEFAULT_GAP_MS, false), null);
+        check("сравнение: сырые значения боя совпадают с суммами", raw.size() == 2 && raw.get(0).acc().equals(f0)
+                && raw.get(0).get(Compare.Metric.HIT_RATE).length == 10 && raw.get(0).get(Compare.Metric.REACH).length == 4
+                && Compare.raw(ev, Rules.single(JumpResetEvaluator.Params.DEFAULT, 100), StatFilter.NONE,
+                new Trades.Params(Trades.DEFAULT_GAP_MS, false), Set.of(40_000L)).size() == 1);
+        check("сравнение: доли по боям для распределения", Compare.perFight(Compare.Metric.HIT_RATE, raw).size() == 2
+                && near(Compare.perFight(Compare.Metric.HIT_RATE, raw).get(0)[0], 40, 1e-9)
+                && Compare.shares(Compare.Metric.HIT_RATE, s.fights()).size() == 2);
+        List<double[]> ma = new ArrayList<>(), mb = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            ma.add(new double[]{1.0 + i % 3 * 0.1, 1.1, 1.2});
+            mb.add(new double[]{2.0 + i % 3 * 0.1, 2.1, 2.2});
+        }
+        double[] md = Compare.medianDiff(ma, mb, 3, 500, 10_000);
+        Compare.Dist da = Compare.dist(Compare.pool(ma));
+        check("сравнение: интервал разницы медиан по боям", md[0] > 0.8 && md[1] < 1.2 && near(da.median(), 1.1, 1e-9) && da.n() == 36
+                && Double.isNaN(Compare.medianDiff(ma.subList(0, 3), mb, 3, 500, 10_000)[0]));
         Path cf = Files.createTempFile("cdcmp", ".json");
         ProgressCache c = new ProgressCache();
         c.put("c.cdrec", 1, "k", s);
