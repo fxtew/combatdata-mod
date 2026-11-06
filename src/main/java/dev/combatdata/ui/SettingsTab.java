@@ -388,6 +388,25 @@ final class SettingsTab implements Tab {
         y = num(ui, x, y, w, t("Без замедления: скорость после удара выше", "No slowdown: speed after the hit above"),
                 t("Доля от скорости до удара; честно около 83%", "Share of the speed before the hit; honest is about 83%"),
                 draft.bhKsRatioPct, l.bhKsRatioPct, DEF.bhKsRatioPct, "%", 1, v -> draft.bhKsRatioPct = v);
+        y = num(ui, x, y, w, t("Нет отброса: минимум ваших ударов", "No knockback: your hits at least"), null,
+                draft.bhVelMin, l.bhVelMin, DEF.bhVelMin, "", 1, v -> draft.bhVelMin = v);
+        y = num(ui, x, y, w, t("Нет отброса: доля таких ударов", "No knockback: share of such hits"), null,
+                draft.bhVelSharePct, l.bhVelSharePct, DEF.bhVelSharePct, "%", 5, v -> draft.bhVelSharePct = v);
+        y = num(ui, x, y, w, t("Нет отброса: отлёт меньше", "No knockback: knockback below"),
+                t("Доля от измеренного в профиле сервера", "Share of the server profile's measured knockback"),
+                draft.bhVelPct, l.bhVelPct, DEF.bhVelPct, "%", 5, v -> draft.bhVelPct = v);
+        y = num(ui, x, y, w, t("Издалека: случаев за бой", "Long reach: cases per fight"), null,
+                draft.bhReachMin, l.bhReachMin, DEF.bhReachMin, "", 1, v -> draft.bhReachMin = v);
+        y = num(ui, x, y, w, t("Издалека: доля его ударов", "Long reach: share of their hits"), null,
+                draft.bhReachSharePct, l.bhReachSharePct, DEF.bhReachSharePct, "%", 5, v -> draft.bhReachSharePct = v);
+        y = num(ui, x, y, w, t("Издалека: дальше дальности на", "Long reach: beyond range by"),
+                t("Оценка дистанции на его экране, в его пользу", "Distance on their screen, estimated in their favour"),
+                draft.bhReachExtraCm, l.bhReachExtraCm, DEF.bhReachExtraCm, t(" см", " cm"), 5, v -> draft.bhReachExtraCm = v);
+        y = num(ui, x, y, w, t("Мимо хитбокса: случаев за бой", "Outside the hitbox: cases per fight"), null,
+                draft.bhHbMin, l.bhHbMin, DEF.bhHbMin, "", 1, v -> draft.bhHbMin = v);
+        y = num(ui, x, y, w, t("Мимо хитбокса: промах больше", "Outside the hitbox: miss above"),
+                t("Сверх шага углов в пакетах (2 × 1.4°)", "On top of the packet angle step (2 × 1.4°)"),
+                draft.bhHbExtraDeg, l.bhHbExtraDeg, DEF.bhHbExtraDeg, "°", 1, v -> draft.bhHbExtraDeg = v);
         return y;
     }
 

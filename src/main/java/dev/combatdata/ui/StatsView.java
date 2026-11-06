@@ -199,7 +199,7 @@ final class StatsView {
         calib = Calibration.analyze(attempts, mainPart.jump());
         insights = Insights.evaluate(new Insights.Input(res, mainPart.jump()));
         // The whole recording, not the time or opponent filter: each opponent is checked on all their hits.
-        behavior = s.behavior ? Behavior.analyze(rec.events(), s.behaviorParams()) : Map.of();
+        behavior = s.behavior ? Behavior.analyze(rec.events(), s.behaviorParams(), rules) : Map.of();
         computeMs = (System.nanoTime() - started) / 1_000_000L;
     }
 
@@ -1996,30 +1996,103 @@ final class StatsView {
                 "An estimate from client data, not proof: only their melee hits on you are checked."), Theme.DIM) + 4;
         Settings s = CombatDataClient.settings();
         for (Behavior.Result res : r.results()) y = checkBlock(ui, x, y, w, res, s) + 6;
+        y = context(ui, x, y, w, r.context());
         y = wrapped(ui, x, y, w, t("Честные причины в целом: высокий или скачущий пинг, изменённый нокбэк сервера, неровная местность.",
                 "Honest causes in general: high or jumpy ping, server-modified knockback, uneven ground."), Theme.DIM);
         return y + 4;
     }
 
-    private int checkBlock(Ui ui, int x, int y, int w, Behavior.Result res, Settings s) {
-        boolean crit = res.check() == Behavior.Check.CRITICALS;
-        String name = crit ? t("Криты без падения", "Criticals without falling") : t("Нет замедления после удара", "No slowdown after hitting");
-        String text;
+    /** Lag looks like cheating: ping ranges, ping jumps and teleports are shown instead of being checked. */
+    private int context(Ui ui, int x, int y, int w, Behavior.Context c) {
+        StringBuilder b = new StringBuilder(t("Контекст: его пинг ", "Context: their ping "));
+        b.append(c.oppPingMin() < 0 ? "?" : c.oppPingMin() == c.oppPingMax() ? c.oppPingMin() + t(" мс", " ms")
+                : c.oppPingMin() + "–" + c.oppPingMax() + t(" мс", " ms"));
+        if (c.oppPingJumps() > 0) b.append(t(", скачков пинга ", ", ping jumps ")).append(c.oppPingJumps());
+        if (c.ourPingMin() >= 0) b.append(t(" · ваш ", " · yours ")).append(c.ourPingMin() == c.ourPingMax() ? c.ourPingMin() + t(" мс", " ms")
+                : c.ourPingMin() + "–" + c.ourPingMax() + t(" мс", " ms"));
+        b.append(t(" · телепортов в его позициях: ", " · teleports in their positions: ")).append(c.teleports().size());
+        for (int i = 0; i < Math.min(3, c.teleports().size()); i++) b.append(i == 0 ? " (" : ", ").append(Fmt.clock(c.teleports().get(i)));
+        if (!c.teleports().isEmpty()) b.append(c.teleports().size() > 3 ? ", …)" : ")");
+        boolean laggy = c.oppPingJumps() > 0 || !c.teleports().isEmpty() || c.oppPingMax() >= 200;
+        return wrapped(ui, x, y, w, b.toString(), laggy ? Theme.AMBER : Theme.MUTED) + 4;
+    }
+
+    private static String checkName(Behavior.Check c) {
+        return switch (c) {
+            case CRITICALS -> t("Криты без падения", "Criticals without falling");
+            case KEEP_SPRINT -> t("Нет замедления после удара", "No slowdown after hitting");
+            case VELOCITY -> t("Нет отброса", "No knockback");
+            case REACH -> t("Удары издалека", "Long reach");
+            case HITBOX -> t("Удары мимо хитбокса", "Hits outside the hitbox");
+        };
+    }
+
+    private static String checkText(Behavior.Result res, Settings s) {
+        int n = res.cases().size(), k = res.checked();
         if (res.missing() == Behavior.Missing.NO_DATA) {
-            text = t("нет данных о движении противника (запись до разбора противников или без позиций)",
+            return res.check() == Behavior.Check.REACH
+                    ? t("нет данных о дистанции (запись без полученных ударов)", "no distance data (recorded without hits taken)")
+                    : t("нет данных о движении противника (запись до разбора противников или без позиций)",
                     "no opponent movement data (recorded before opponent checks or without positions)");
-        } else if (crit) {
-            text = res.checked() == 0 ? t("критов по вам не было", "no crits on you")
-                    : res.cases().isEmpty() ? t("нет: перед всеми ", "no: before all ") + res.checked() + t(" критами было падение", " crits there was a fall")
-                    : res.cases().size() + t(" из ", " of ") + res.checked() + t(" критов без изменения высоты, в одном бою до ", " crits with no height change, up to ")
-                    + res.maxPerFight() + t(" (порог ", " in one fight (threshold ") + s.bhCritMin + ")";
-        } else {
-            text = res.checked() < s.bhKsMin ? t("мало подходящих спринт-ударов: ", "too few suitable sprint hits: ") + res.checked()
-                    + t(" из нужных ", " of the needed ") + s.bhKsMin
-                    + (res.cases().isEmpty() ? "" : t(", без замедления ", ", without slowdown ") + res.cases().size())
-                    : res.cases().size() + t(" из ", " of ") + res.checked() + t(" спринт-ударов без замедления (порог ", " sprint hits without slowdown (threshold ")
-                    + s.bhKsSharePct + "%)";
         }
+        if (res.missing() == Behavior.Missing.NO_KB) {
+            return t("мало данных о нокбэке сервера: Настройки → Серверы → «Пересчитать по записям»",
+                    "too little server knockback data: Settings → Servers → Recompute from recordings");
+        }
+        return switch (res.check()) {
+            case CRITICALS -> k == 0 ? t("критов по вам не было", "no crits on you")
+                    : n == 0 ? t("нет: перед всеми ", "no: before all ") + k + t(" критами было падение", " crits there was a fall")
+                    : n + t(" из ", " of ") + k + t(" критов без изменения высоты, в одном бою до ", " crits with no height change, up to ")
+                    + res.maxPerFight() + t(" (порог ", " in one fight (threshold ") + s.bhCritMin + ")";
+            case KEEP_SPRINT -> k < s.bhKsMin ? t("мало подходящих спринт-ударов: ", "too few suitable sprint hits: ") + k
+                    + t(" из нужных ", " of the needed ") + s.bhKsMin + (n == 0 ? "" : t(", без замедления ", ", without slowdown ") + n)
+                    : n + t(" из ", " of ") + k + t(" спринт-ударов без замедления (порог ", " sprint hits without slowdown (threshold ")
+                    + s.bhKsSharePct + "%)";
+            case VELOCITY -> k < s.bhVelMin ? t("мало ваших ударов по нему на земле: ", "too few of your hits on them on ground: ") + k
+                    + t(" из нужных ", " of the needed ") + s.bhVelMin + (n == 0 ? "" : t(", почти без отлёта ", ", almost no knockback ") + n)
+                    : n + t(" из ", " of ") + k + t(" ваших ударов: отлёт меньше ", " of your hits: knockback below ") + s.bhVelPct
+                    + t("% ожидаемого (порог ", "% of expected (threshold ") + s.bhVelSharePct + "%)";
+            case REACH -> k == 0 ? t("ударов мечом или топором по вам не было", "no sword or axe hits on you")
+                    : n == 0 ? t("нет: все ", "no: all ") + k + t(" ударов в пределах дальности на его экране", " hits within range on their screen")
+                    : n + t(" из ", " of ") + k + t(" ударов дальше ", " hits farther than ")
+                    + Fmt.num(AttackEvent.DEFAULT_RANGE + s.bhReachExtraCm / 100.0, 1) + t(" бл. на его экране, в одном бою до ", " bl. on their screen, up to ")
+                    + res.maxPerFight() + t(" (порог ", " in one fight (threshold ") + s.bhReachMin + t(" и ", " and ") + s.bhReachSharePct + "%)";
+            case HITBOX -> k == 0 ? t("ударов по вам не было", "no hits on you")
+                    : n == 0 ? t("нет: во всех ", "no: in all ") + k + t(" ударах взгляд проходил через ваш хитбокс", " hits their look went through your hitbox")
+                    : n + t(" из ", " of ") + k + t(" ударов со взглядом мимо хитбокса больше чем на ", " hits looking past the hitbox by more than ")
+                    + s.bhHbExtraDeg + t("°, в одном бою до ", "°, up to ") + res.maxPerFight() + t(" (порог ", " in one fight (threshold ") + s.bhHbMin + ")";
+        };
+    }
+
+    private static String caseValue(Behavior.Check check, Behavior.Case c) {
+        return switch (check) {
+            case CRITICALS -> t("высота ±", "height ±") + Fmt.num(c.value(), 3) + t(" бл., на земле ", " bl., on ground ")
+                    + c.groundStates() + t(" из ", " of ") + c.states() + t(" пакетов", " packets");
+            case KEEP_SPRINT -> t("скорость ", "speed ") + Math.round(c.value() * 100) + t("% от прежней", "% of before");
+            case VELOCITY -> t("отлёт ", "knockback ") + Math.round(c.value() * 100) + t("% ожидаемого", "% of expected");
+            case REACH -> t("на его экране ≈", "on their screen ≈") + Fmt.num(c.value(), 2) + t(" бл.", " bl.");
+            case HITBOX -> t("мимо на ", "off by ") + Fmt.num(c.value(), 1) + "°";
+        };
+    }
+
+    private static String honest(Behavior.Check c) {
+        return switch (c) {
+            case CRITICALS -> t("Честные причины: лаг или потеря пакетов (высота не обновлялась), скачки пинга.",
+                    "Honest causes: lag or packet loss (height not updated), ping spikes.");
+            case KEEP_SPRINT -> t("Честные причины: неровный приход пакетов при скачущем пинге, удар без полного заряда, который не распознан, лёд и эффекты скорости.",
+                    "Honest causes: uneven packet arrival with jumpy ping, a not fully charged hit that was not recognised, ice and speed effects.");
+            case VELOCITY -> t("Честные причины: он шёл вам навстречу или сделал jump reset, стена за спиной, сервер меняет нокбэк, мало данных калибровки.",
+                    "Honest causes: they walked into you or did a jump reset, a wall behind them, the server changes knockback, little calibration data.");
+            case REACH -> t("Честные причины: скачки пинга, неверный пинг противника в списке игроков (сервер может его скрывать или округлять).",
+                    "Honest causes: ping spikes, a wrong opponent ping in the player list (servers may hide or round it).");
+            case HITBOX -> t("Честные причины: очень резкий разворот вплотную, скачки пинга, неточная оценка задержки.",
+                    "Honest causes: a very fast turn at point-blank range, ping spikes, an inexact delay estimate.");
+        };
+    }
+
+    private int checkBlock(Ui ui, int x, int y, int w, Behavior.Result res, Settings s) {
+        String name = checkName(res.check());
+        String text = checkText(res, s);
         int nameW = ui.font.width(name + ": ");
         ui.text(name + ": ", x, y, res.flagged() ? Theme.AMBER : Theme.TEXT);
         y = wrappedFrom(ui, x, x + nameW, y, w, text, res.flagged() ? Theme.AMBER : Theme.MUTED);
@@ -2034,10 +2107,8 @@ final class StatsView {
             y += LINE;
             if (open) {
                 for (Behavior.Case c : res.cases()) {
-                    String v = crit ? t("высота ±", "height ±") + Fmt.num(c.value(), 3) + t(" бл., на земле ", " bl., on ground ")
-                            + c.groundStates() + t(" из ", " of ") + c.states() + t(" пакетов", " packets")
-                            : t("скорость ", "speed ") + Math.round(c.value() * 100) + t("% от прежней", "% of before");
-                    String row = Fmt.clockMs(c.t()) + " · " + v + (Double.isFinite(c.reach()) ? t(" · дистанция ", " · distance ") + Fmt.num(c.reach(), 2) : "")
+                    String row = Fmt.clockMs(c.t()) + " · " + caseValue(res.check(), c)
+                            + (Double.isFinite(c.reach()) ? t(" · дистанция ", " · distance ") + Fmt.num(c.reach(), 2) : "")
                             + t(" · пинг ", " · ping ") + c.pingMs() + " / " + (c.attackerPingMs() < 0 ? "?" : String.valueOf(c.attackerPingMs()));
                     boolean hov = ui.hover(x + 4, y - 2, w - 4, LINE);
                     if (hov) Draw.round(ui.g, x + 4, y - 2, w - 4, LINE, Theme.R_CTRL, Theme.ROW_HOVER);
@@ -2049,13 +2120,9 @@ final class StatsView {
                 }
             }
         }
-        String why = crit
-                ? t("Честные причины: лаг или потеря пакетов (высота не обновлялась), скачки пинга.",
-                "Honest causes: lag or packet loss (height not updated), ping spikes.")
-                : t("Честные причины: неровный приход пакетов при скачущем пинге, удар без полного заряда, который не распознан, лёд и эффекты скорости.",
-                "Honest causes: uneven packet arrival with jumpy ping, a not fully charged hit that was not recognised, ice and speed effects.");
-        return wrapped(ui, x + 8, y, w - 8, why, Theme.DIM);
+        return wrapped(ui, x + 8, y, w - 8, honest(res.check()), Theme.DIM);
     }
+
 
     /** Fights → Distance with the replay on, at time t. */
     private void moment(long t) {

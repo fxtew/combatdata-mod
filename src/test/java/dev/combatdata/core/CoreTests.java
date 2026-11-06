@@ -15,6 +15,7 @@ public final class CoreTests {
         opponentData();
         serverProfiles();
         behavior();
+        behaviorCDE();
         bufferTrimAndSnapshot();
         geometry();
         threeBlockHit();
@@ -688,6 +689,124 @@ public final class CoreTests {
                 && Double.isNaN(Behavior.cooldownTicks(Weapon.OTHER, null)));
         Settings s = new Settings();
         check("разбор по умолчанию включён, пороги из ТЗ", s.behavior && s.behaviorParams().equals(Behavior.Params.DEFAULT));
+    }
+
+    static IncomingHitEvent meleeFrom(long t, UUID who, Weapon w, double reach, double attV, double selfV, int attPing) {
+        return new IncomingHitEvent(t, 0, who, "Alpha", true, false, true, 40, 0.9, IncomingHitEvent.Kind.MELEE, null, w,
+                w == Weapon.SPEAR ? "minecraft:iron_spear" : "minecraft:diamond_sword", Relation.TEAM_NONE, reach, 3.0, attV, selfV, attPing);
+    }
+
+    static void behaviorCDE() {
+        Settings s = new Settings();
+        Behavior.Params p = Behavior.Params.DEFAULT;
+        // C: our six hits two seconds apart; we stand at x = 0, they at x = 2 and fly 0.9 away (honest) or stay (cheat).
+        ServerProfile prof = ServerProfile.create("kb.net", ServerProfile.Preset.VANILLA, ServerProfile.Origin.AUTO, s, 1);
+        prof.kb = new ServerProfile.Knockback(0.9, 0.4, 20, 1.3, 0.4, 20, 1.0, 40, 1);
+        ServerProfiles ps = new ServerProfiles();
+        ps.put(prof);
+        List<Long> hitT = new ArrayList<>();
+        for (int i = 1; i <= 6; i++) hitT.add(i * 2000L);
+        List<Event> honest = new ArrayList<>(), cheat = new ArrayList<>();
+        for (List<Event> l : List.of(honest, cheat)) l.add(new SegmentEvent(0, "kb.net", "d", 0));
+        for (int k = 0; k <= 280; k++) {
+            long t = k * 50L;
+            double fly = 0;
+            for (long h : hitT) if (t > h + 40) fly += 0.9 * Math.min(1, (t - h - 40) / 500.0);
+            honest.add(new OtherStateEvent(t, k, A, 2 + fly, 64, 0, 90, 0, true, false, null));
+            cheat.add(new OtherStateEvent(t, k, A, 2, 64, 0, 90, 0, true, false, null));
+            for (List<Event> l : List.of(honest, cheat)) l.add(new PositionEvent(t, k, 0, 64, 0, -90, List.of()));
+        }
+        for (long h : hitT) {
+            honest.add(atk(h, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+            cheat.add(atk(h, A, Outcome.HIT_CONFIRMED, 2.5, 1f));
+            honest.add(meleeFrom(h + 900, A, Weapon.SWORD, 2.6, 0, 0, 60));
+            cheat.add(meleeFrom(h + 900, A, Weapon.SWORD, 2.6, 0, 0, 60));
+        }
+        honest.sort(Comparator.comparingLong(Event::t));
+        cheat.sort(Comparator.comparingLong(Event::t));
+        Rules rules = Rules.of(honest, ps, s);
+        Behavior.Result hc = Behavior.analyze(honest, p, rules).get(A).get(Behavior.Check.VELOCITY);
+        Behavior.Result cc = Behavior.analyze(cheat, p, rules).get(A).get(Behavior.Check.VELOCITY);
+        check("C: честный отлёт не срабатывает", hc.checked() == 6 && hc.cases().isEmpty() && !hc.flagged());
+        check("C: нет отлёта срабатывает", cc.checked() == 6 && cc.cases().size() == 6 && cc.flagged() && near(cc.cases().get(0).value(), 0, 1e-9));
+        ServerProfiles empty = new ServerProfiles();
+        empty.put(ServerProfile.create("kb.net", ServerProfile.Preset.VANILLA, ServerProfile.Origin.AUTO, s, 1));
+        Behavior.Result nk = Behavior.analyze(cheat, p, Rules.of(cheat, empty, s)).get(A).get(Behavior.Check.VELOCITY);
+        check("C: мало данных о нокбэке сервера: не запускается", nk.checked() == 0 && nk.missing() == Behavior.Missing.NO_KB && !nk.flagged());
+        prof.useMeasuredKb = false;
+        check("C: измеренный нокбэк выключен в профиле", Behavior.analyze(cheat, p, rules).get(A).get(Behavior.Check.VELOCITY).missing()
+                == Behavior.Missing.NO_KB);
+        prof.useMeasuredKb = true;
+        List<Event> lagC = new ArrayList<>();
+        for (Event e : cheat) if (!(e instanceof OtherStateEvent o) || o.t() < 1000) lagC.add(e);
+        Behavior.Result lc = Behavior.analyze(lagC, p, rules).get(A).get(Behavior.Check.VELOCITY);
+        check("C: лаг (нет позиций противника) не срабатывает", lc.cases().isEmpty() && lc.skipped() == 6);
+        check("C: ожидаемый спринт-нокбэк из профиля", near(Behavior.expectedKb(rules, 5000, true), 1.3, 1e-9)
+                && near(Behavior.expectedKb(rules, 5000, false), 0.9, 1e-9));
+
+        // D: reach on their screen.
+        List<Event> far = new ArrayList<>(), ok = new ArrayList<>(), moving = new ArrayList<>(), spear = new ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            long t = i * 1000L;
+            far.add(meleeFrom(t, A, Weapon.SWORD, 3.9, 0, 0, 60));
+            ok.add(meleeFrom(t, A, Weapon.SWORD, 2.8, 0, 0, 60));
+            moving.add(meleeFrom(t, A, Weapon.SWORD, 3.9, 0, 6, 60));
+            spear.add(meleeFrom(t, A, Weapon.SPEAR, 4.5, 0, 0, 60));
+        }
+        Behavior.Result df = Behavior.analyze(far, p).get(A).get(Behavior.Check.REACH);
+        check("D: удары с 3.9 блока срабатывают", df.cases().size() == 4 && df.flagged() && near(df.cases().get(0).value(), 3.9, 1e-9));
+        check("D: обычная дистанция не срабатывает", Behavior.analyze(ok, p).get(A).get(Behavior.Check.REACH).cases().isEmpty());
+        check("D: уход от противника списывается задержкой", Behavior.analyze(moving, p).get(A).get(Behavior.Check.REACH).cases().isEmpty()
+                && Behavior.opponentReach(meleeFrom(0, A, Weapon.SWORD, 3.9, 0, 6, 60), 100) < 3.0);
+        check("D: копья не проверяются", Behavior.analyze(spear, p).get(A).get(Behavior.Check.REACH).checked() == 0);
+        check("D: неизвестный пинг в пользу противника", Behavior.opponentReach(meleeFrom(0, A, Weapon.SWORD, 3.9, 4, 0, -1), 100)
+                < Behavior.opponentReach(meleeFrom(0, A, Weapon.SWORD, 3.9, 4, 0, 20), 100));
+        check("D: старая запись без дистанции", Behavior.analyze(List.of(from(1000, A)), p).get(A).get(Behavior.Check.REACH).missing()
+                == Behavior.Missing.NO_DATA);
+
+        // E: they stand at the origin, we are 2.5 blocks south (+z). Yaw 0 looks south.
+        List<Event> look = new ArrayList<>(), away = new ArrayList<>(), flick = new ArrayList<>();
+        for (int k = 0; k <= 100; k++) {
+            long t = k * 50L;
+            for (List<Event> l : List.of(look, away, flick)) l.add(new PositionEvent(t, k, 0, 64, 2.5, 180, List.of()));
+            look.add(new OtherStateEvent(t, k, A, 0, 64, 0, 0, 0, true, false, null));
+            away.add(new OtherStateEvent(t, k, A, 0, 64, 0, 90, 0, true, false, null));
+            boolean after = k % 20 == 0;
+            flick.add(new OtherStateEvent(t, k, A, 0, 64, 0, after ? -40 : 60, 0, true, false, null));
+        }
+        for (int i = 1; i <= 4; i++) {
+            long t = i * 1000L - 10;
+            for (List<Event> l : List.of(look, away, flick)) l.add(meleeFrom(t, A, Weapon.SWORD, 2.2, 0, 0, 60));
+        }
+        for (List<Event> l : List.of(look, away, flick)) l.sort(Comparator.comparingLong(Event::t));
+        Behavior.Result el = Behavior.analyze(look, p).get(A).get(Behavior.Check.HITBOX);
+        Behavior.Result ea = Behavior.analyze(away, p).get(A).get(Behavior.Check.HITBOX);
+        check("E: взгляд на хитбокс не срабатывает", el.checked() == 4 && el.cases().isEmpty() && !el.flagged());
+        check("E: удары с отвёрнутым взглядом срабатывают", ea.cases().size() == 4 && ea.flagged() && ea.cases().get(0).value() > 60);
+        check("E: резкий разворот через цель не срабатывает", Behavior.analyze(flick, p).get(A).get(Behavior.Check.HITBOX).cases().isEmpty());
+        check("E: взгляд вниз-вперёд", Behavior.missDeg(new Geometry.V3(0, 65.62, 0), Behavior.look(0, 30),
+                new Geometry.Aabb(-0.3, 64, 2.2, 0.3, 65.8, 2.8)) == 0 && Behavior.missDeg(new Geometry.V3(0, 65.62, 0),
+                Behavior.look(180, 0), new Geometry.Aabb(-0.3, 64, 2.2, 0.3, 65.8, 2.8)) > 90);
+        Behavior.Report er = Behavior.analyze(away, p).get(A);
+        check("один признак E: есть странности", er.level() == Behavior.Level.ODD);
+
+        // Lag context: ping jumps and teleports.
+        List<Event> lag = new ArrayList<>();
+        lag.add(meleeFrom(1000, A, Weapon.SWORD, 2.5, 0, 0, 40));
+        lag.add(meleeFrom(2000, A, Weapon.SWORD, 2.5, 0, 0, 220));
+        lag.add(meleeFrom(3000, A, Weapon.SWORD, 2.5, 0, 0, 50));
+        lag.add(new PingEvent(500, 30));
+        lag.add(new PingEvent(1500, 90));
+        lag.add(new OtherStateEvent(2500, 50, A, 0, 64, 0, 0, 0, true, false, null));
+        lag.add(new OtherStateEvent(2550, 51, A, 5, 64, 0, 0, 0, true, false, null));
+        lag.add(new OtherStateEvent(2600, 52, A, 5.2, 64, 0, 0, 0, true, false, null));
+        lag.sort(Comparator.comparingLong(Event::t));
+        Behavior.Context ctx = Behavior.analyze(lag, p).get(A).context();
+        check("контекст: пинг противника и скачки", ctx.oppPingMin() == 40 && ctx.oppPingMax() == 220 && ctx.oppPingJumps() == 2);
+        check("контекст: наш пинг и телепорт", ctx.ourPingMin() == 30 && ctx.ourPingMax() == 90 && ctx.teleports().equals(List.of(2550L)));
+        check("пороги C, D, E по умолчанию из ТЗ", p.velMin() == 5 && p.velSharePct() == 70 && p.velPct() == 30 && p.reachMin() == 3
+                && p.reachSharePct() == 20 && near(p.reachExtra(), 0.3, 1e-9) && p.hbMin() == 3 && near(p.hbExtraDeg(), 10, 1e-9)
+                && s.behaviorParams().equals(p));
     }
 
     static void bufferTrimAndSnapshot() {
