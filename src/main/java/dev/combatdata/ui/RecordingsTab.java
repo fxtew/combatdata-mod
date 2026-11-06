@@ -275,18 +275,22 @@ final class RecordingsTab implements Tab {
         boolean hov = !sortOpen && ui.hover(x, y, w, ROW);
         if (liveSelected) Draw.round(ui.g, x + 2, y + 1, w - 8, ROW - 2, Theme.R_CTRL, Theme.RAISED_HOVER);
         else if (hov) Draw.round(ui.g, x + 2, y + 1, w - 8, ROW - 2, Theme.R_CTRL, Theme.ROW_HOVER);
-        boolean on = Recorder.active();
+        boolean on = Recorder.active(), enabled = Recorder.enabled();
         Draw.circle(ui.g, x + 6, y + 5, 7, on ? 0xFFE5584B : Theme.MUTED);
         String state = on ? (Recorder.full() ? t("Идёт запись, буфер полон", "Recording, buffer full") : t("Идёт запись", "Recording"))
-                : t("Запись на паузе", "Recording paused");
+                : enabled ? t("Запись на паузе", "Recording paused") : t("Запись выключена", "Recording off");
+        String bl = enabled ? t("Выключить", "Turn off") : t("Включить", "Turn on");
+        int bw = ui.buttonWidth(bl);
+        boolean button = w >= 220 + bw;
+        int right = button ? x + w - 12 - bw - 6 : x + w - 12;
         String time = Fmt.clock(Recorder.shownMs()) + " / " + Fmt.clock(Recorder.capacityMs());
         int tw = ui.font.width(time);
-        ui.text(Draw.ellipsize(ui.font, t("Текущий буфер · ", "Live buffer · ") + state, w - 44 - tw), x + 20, y + 4, Theme.TEXT_STRONG);
-        ui.textRight(time, x + w - 12, y + 4, on ? 0xFFE5584B : Theme.MUTED);
+        ui.text(Draw.ellipsize(ui.font, t("Текущий буфер · ", "Live buffer · ") + state, right - x - 32 - tw), x + 20, y + 4, Theme.TEXT_STRONG);
+        ui.textRight(time, right, y + 4, on ? 0xFFE5584B : Theme.MUTED);
         String server = Recorder.currentServer();
         String meta = (server.isEmpty() ? t("вне сервера", "not on a server") : server) + t(" · событий: ", " · events: ") + Recorder.bufferSize()
                 + (Recorder.hasCombatEvents() ? "" : t(" · боевых нет", " · no combat yet"));
-        ui.text(Draw.ellipsize(ui.font, meta, w - 32), x + 20, y + 14, Theme.MUTED);
+        ui.text(Draw.ellipsize(ui.font, meta, right - x - 20), x + 20, y + 14, Theme.MUTED);
         ui.click(x, y, w, ROW, () -> {
             if (selectMode) return;
             boolean open = menu.lastDoubleClick() && liveSelected;
@@ -294,6 +298,9 @@ final class RecordingsTab implements Tab {
             selected = null;
             if (open) open();
         });
+        // Added after the row so the button gets the click.
+        if (button) ui.button(x + w - 12 - bw, y + 4, bw, 16, bl, Ui.Kind.GHOST, true,
+                () -> Recorder.setRecording(net.minecraft.client.Minecraft.getInstance(), !enabled));
     }
 
     private void open() {

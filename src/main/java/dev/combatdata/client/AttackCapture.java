@@ -40,7 +40,7 @@ public final class AttackCapture {
     public static void onAttack(Player attacker, Entity entity) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (!Recorder.active() || p == null || attacker != p || !(entity instanceof Player target) || target == p) return;
+        if (!Recorder.capturing() || p == null || attacker != p || !(entity instanceof Player target) || target == p) return;
         Vec3 hit = null;
         if (mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() == entity) hit = ehr.getLocation();
         AttackEvent e = build(p, target, Outcome.HIT_UNCONFIRMED, hit);
@@ -51,7 +51,7 @@ public final class AttackCapture {
     /** HEAD of Minecraft.startAttack. Conditions mirror vanilla so swings that never happen are not logged. */
     public static void onStartAttack(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (!Recorder.active() || p == null || mc.level == null || mc.gameMode == null) return;
+        if (!Recorder.capturing() || p == null || mc.level == null || mc.gameMode == null) return;
         if (mc.missTime > 0 || mc.hitResult == null || p.isHandsBusy() || mc.gameMode.isSpectator()) return;
         if (p.getItemInHand(InteractionHand.MAIN_HAND).get(DataComponents.PIERCING_WEAPON) != null) return;
         HitResult hr = mc.hitResult;

@@ -26,6 +26,8 @@ public final class Settings {
     public int hudBgOpacity = 60;
     public int hudFormat = HUD_FULL, hudTextColor = HUD_COLOR_STATE;
     public boolean hudShowDot = true, hudBlink = true, hudShadow = false, hudHideWhenPaused = false;
+    /** Recording on or off; capture for the HUD keeps running either way. */
+    public boolean recordingEnabled = true, hudShowWhenOff = false;
     public boolean debugLog = false;
     public boolean autoSave = false;
     public boolean clearOnServerChange = false;
@@ -178,6 +180,8 @@ public final class Settings {
         hudBlink = c.hudBlink;
         hudShadow = c.hudShadow;
         hudHideWhenPaused = c.hudHideWhenPaused;
+        recordingEnabled = c.recordingEnabled;
+        hudShowWhenOff = c.hudShowWhenOff;
         storageLimitMb = c.storageLimitMb;
         autoDeleteDays = c.autoDeleteDays;
         soundOnSave = c.soundOnSave;
@@ -235,6 +239,8 @@ public final class Settings {
         hudBlink = o.hudBlink;
         hudShadow = o.hudShadow;
         hudHideWhenPaused = o.hudHideWhenPaused;
+        recordingEnabled = o.recordingEnabled;
+        hudShowWhenOff = o.hudShowWhenOff;
         fightSummary = o.fightSummary;
         fsTitle = o.fsTitle;
         fsHits = o.fsHits;
@@ -262,6 +268,7 @@ public final class Settings {
         a.remove("fsX");
         a.remove("fsY");
         a.remove("indicators");
+        a.remove("recordingEnabled");
         int n = 0;
         for (Map.Entry<String, Object> e : a.entrySet()) if (!e.getValue().equals(b.get(e.getKey()))) n++;
         return n;
@@ -295,6 +302,8 @@ public final class Settings {
         m.put("hudBlink", hudBlink);
         m.put("hudShadow", hudShadow);
         m.put("hudHideWhenPaused", hudHideWhenPaused);
+        m.put("recordingEnabled", recordingEnabled);
+        m.put("hudShowWhenOff", hudShowWhenOff);
         m.put("storageLimitMb", storageLimitMb);
         m.put("autoDeleteDays", autoDeleteDays);
         m.put("soundOnSave", soundOnSave);
@@ -363,6 +372,8 @@ public final class Settings {
         if (m.get("hudBlink") instanceof Boolean b) s.hudBlink = b;
         if (m.get("hudShadow") instanceof Boolean b) s.hudShadow = b;
         if (m.get("hudHideWhenPaused") instanceof Boolean b) s.hudHideWhenPaused = b;
+        if (m.get("recordingEnabled") instanceof Boolean b) s.recordingEnabled = b;
+        if (m.get("hudShowWhenOff") instanceof Boolean b) s.hudShowWhenOff = b;
         if (m.get("storageLimitMb") instanceof Number n) s.storageLimitMb = n.intValue();
         if (m.get("autoDeleteDays") instanceof Number n) s.autoDeleteDays = n.intValue();
         if (m.get("soundOnSave") instanceof Boolean b) s.soundOnSave = b;

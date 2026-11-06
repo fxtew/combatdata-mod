@@ -30,6 +30,7 @@ public final class CombatDataClient implements ClientModInitializer {
     public static KeyMapping MARKER;
     public static KeyMapping RESET;
     public static KeyMapping INDICATORS;
+    public static KeyMapping RECORD;
 
     private static Settings settings = new Settings();
 
@@ -56,6 +57,7 @@ public final class CombatDataClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         settings = Settings.load(configFile());
+        Recorder.init(settings);
         saveSettings();
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "main"));
         MENU = KeyBindingHelper.registerKeyBinding(
@@ -68,6 +70,8 @@ public final class CombatDataClient implements ClientModInitializer {
                 new KeyMapping("key.combatdata.reset_buffer", GLFW.GLFW_KEY_UNKNOWN, category));
         INDICATORS = KeyBindingHelper.registerKeyBinding(
                 new KeyMapping("key.combatdata.toggle_indicators", GLFW.GLFW_KEY_UNKNOWN, category));
+        RECORD = KeyBindingHelper.registerKeyBinding(
+                new KeyMapping("key.combatdata.toggle_recording", GLFW.GLFW_KEY_UNKNOWN, category));
         Commands.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> Safe.run("тик", () -> Recorder.onTick(mc)));
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> Safe.run("выход из игры", () -> Recorder.onStopping(mc)));
