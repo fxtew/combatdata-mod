@@ -78,8 +78,14 @@ public final class Progress {
     public record Opp(String name, Metrics m) {
     }
 
+    /** fights: per-fight sums for comparisons (empty in summaries from older caches). */
     public record Summary(String file, long wallStartMs, long durationMs, List<String> servers, Metrics all,
-                          Map<UUID, Opp> opponents) {
+                          Map<UUID, Opp> opponents, List<Compare.FightAcc> fights) {
+        public Summary(String file, long wallStartMs, long durationMs, List<String> servers, Metrics all,
+                       Map<UUID, Opp> opponents) {
+            this(file, wallStartMs, durationMs, servers, all, opponents, List.of());
+        }
+
         public Metrics select(UUID opp) {
             if (opp == null) return all;
             Opp o = opponents.get(opp);
@@ -121,7 +127,7 @@ public final class Progress {
 
     /** Cache key with server profiles: only the fields that change ratings, so visiting a server keeps the cache. */
     public static String cacheKey(StatFilter sf, Settings s, ServerProfiles profiles, long tradeGapMs) {
-        return "v3/" + sf + "/" + s.jumpParams() + "/" + s.interpMs + "/" + tradeGapMs + "/" + profiles.ratingKey();
+        return "v4/" + sf + "/" + s.jumpParams() + "/" + s.interpMs + "/" + tradeGapMs + "/" + profiles.ratingKey();
     }
 
     public static Summary summarize(String file, Recording r, Rules rules, StatFilter sf, long tradeGapMs,
@@ -141,7 +147,8 @@ public final class Progress {
         }
         Set<String> servers = new LinkedHashSet<>();
         for (Event e : r.events()) if (e instanceof SegmentEvent s && s.server() != null) servers.add(s.server());
-        return new Summary(file, r.wallStartMs(), r.durationMs(), List.copyOf(servers), Metrics.of(all), opps);
+        List<Compare.FightAcc> fights = Compare.fights(kept, rules, sf, tp);
+        return new Summary(file, r.wallStartMs(), r.durationMs(), List.copyOf(servers), Metrics.of(all), opps, List.copyOf(fights));
     }
 
     public static List<Event> dropSmallFights(List<Event> ev, StatFilter sf) {
@@ -253,6 +260,9 @@ public final class Progress {
             opp.put(e.getKey().toString(), x);
         }
         o.put("opp", opp);
+        List<Object> fl = new ArrayList<>();
+        for (Compare.FightAcc f : s.fights()) fl.add(fightJson(f));
+        o.put("fights", fl);
         return o;
     }
 
@@ -271,7 +281,59 @@ public final class Progress {
                 }
             }
         }
-        return new Summary(file, lng(m, "start"), lng(m, "dur"), List.copyOf(servers), metrics(m.get("all")), opps);
+        List<Compare.FightAcc> fights = new ArrayList<>();
+        if (m.get("fights") instanceof List<?> fl) for (Object x : fl) {
+            Compare.FightAcc f = fight(x);
+            if (f != null) fights.add(f);
+        }
+        return new Summary(file, lng(m, "start"), lng(m, "dur"), List.copyOf(servers), metrics(m.get("all")), opps,
+                List.copyOf(fights));
+    }
+
+    /** Sums by metric name, [n, sum, sum of squares]; unknown names are skipped. */
+    static Map<String, Object> fightJson(Compare.FightAcc f) {
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("t", f.startMs());
+        if (f.server() != null) o.put("sv", f.server());
+        if (f.opponent() != null) o.put("o", f.opponent().toString());
+        if (f.opponentName() != null) o.put("on", f.opponentName());
+        o.put("w", f.weapon().name());
+        Map<String, Object> acc = new LinkedHashMap<>();
+        for (Compare.Metric mt : Compare.Metric.values()) {
+            if (mt.source() != mt) continue;
+            Compare.Acc a = f.get(mt);
+            if (a.n() > 0) acc.put(mt.name(), List.of(a.n(), a.sum(), a.sq()));
+        }
+        o.put("m", acc);
+        return o;
+    }
+
+    static Compare.FightAcc fight(Object x) {
+        if (!(x instanceof Map<?, ?> m)) return null;
+        UUID opp = null;
+        try {
+            if (m.get("o") instanceof String s) opp = UUID.fromString(s);
+        } catch (IllegalArgumentException ignored) {
+        }
+        Weapon w = Weapon.UNKNOWN;
+        try {
+            if (m.get("w") instanceof String s) w = Weapon.valueOf(s);
+        } catch (IllegalArgumentException ignored) {
+        }
+        Compare.Acc[] acc = new Compare.Acc[Compare.Metric.values().length];
+        Arrays.fill(acc, Compare.Acc.ZERO);
+        if (m.get("m") instanceof Map<?, ?> am) for (Map.Entry<?, ?> e : am.entrySet()) {
+            try {
+                Compare.Metric mt = Compare.Metric.valueOf(String.valueOf(e.getKey()));
+                if (e.getValue() instanceof List<?> l && l.size() == 3 && l.get(0) instanceof Number n
+                        && l.get(1) instanceof Number s && l.get(2) instanceof Number q) {
+                    acc[mt.ordinal()] = new Compare.Acc(n.intValue(), s.doubleValue(), q.doubleValue());
+                }
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        return new Compare.FightAcc(lng(m, "t"), m.get("sv") instanceof String s ? s : null, opp,
+                m.get("on") instanceof String s ? s : null, w, acc);
     }
 
     private static int num(Map<?, ?> m, String k) {

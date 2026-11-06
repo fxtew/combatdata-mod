@@ -125,6 +125,11 @@ public final class MenuScreen extends Screen {
         switchTab(TabId.VIEW);
     }
 
+    void compareRecordings(String fileA, String fileB) {
+        progress.compareFiles(fileA, fileB);
+        switchTab(TabId.PROGRESS);
+    }
+
     void openLive() {
         view.setLive();
         switchTab(TabId.VIEW);

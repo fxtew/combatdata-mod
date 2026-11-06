@@ -121,6 +121,11 @@ final class Help {
                 "Each dot is a recording or a day, evenly spaced in order, dates below. A dot appears only with enough data (e.g. 5+ attacks). Dashed line: the average. Click a dot to open the recording.");
     }
 
+    static String compare() {
+        return t("Сравнение A и B: «A → B» и разница. ▲ зелёный — стало лучше, ▼ красный — хуже, ≈ — в пределах случайности, «мало данных» — не с чем сравнивать. Без стрелки — метрика без оценки (например, дистанция). Случайность оценивается по боям: удары одного боя связаны. * — боёв меньше 5, интервал по ударам и уже настоящего. Две записи: в «Записях» Ctrl+клик по двум и «Сравнить». ⇄ меняет A и B местами.",
+                "A against B: \"A → B\" and the difference. ▲ green is better, ▼ red worse, ≈ within chance, \"too little data\" means nothing to compare. No arrow: a metric that is not rated (e.g. distance). Chance is judged by fights: hits of one fight are related. * means fewer than 5 fights, a per-hit interval that is narrower than the real one. Two recordings: Ctrl+click two in Recordings and press Compare. ⇄ swaps A and B.");
+    }
+
     static String interp() {
         return t("Игра противника показывает вас чуть в прошлом, чтобы движение было плавным. Обычно около 100 мс. Нужно только для оценки 3 block hit.",
                 "The opponent's game shows you slightly in the past to keep movement smooth. Usually about 100 ms. Only used to estimate 3 block hits.");
