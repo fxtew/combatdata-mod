@@ -27,11 +27,12 @@ final class ReplayView {
     private long lastNs;
     private int sx, sy, sw, vx, vy, vw, vh;
 
-    void set(List<PositionEvent> f, UUID opponent, List<JumpResetEvaluator.Attempt> jr) {
+    /** span: Replay.span of the frames, computed with them off the render thread. */
+    void set(List<PositionEvent> f, UUID opponent, List<JumpResetEvaluator.Attempt> jr, double span) {
         frames = f;
         opp = opponent;
         attempts = jr;
-        span = Replay.span(f, opponent);
+        this.span = span;
         if (f.isEmpty()) {
             time = -1;
             playing = false;

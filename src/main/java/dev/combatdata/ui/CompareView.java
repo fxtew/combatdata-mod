@@ -522,7 +522,7 @@ final class CompareView {
             if (e == null) return null;
             try {
                 Recording r = Cdrec.read(e.file());
-                List<Event> kept = Progress.dropSmallFights(sf.apply(r.events()).kept(), sf);
+                List<Event> kept = Progress.dropSmallFights(sf.apply(Stats.withoutMovement(r.events())).kept(), sf);
                 out.addAll(Compare.raw(kept, Rules.of(r.events(), profiles, s), sf, tp, keep));
             } catch (Exception ex) {
                 return null;

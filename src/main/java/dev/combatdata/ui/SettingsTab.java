@@ -7,6 +7,7 @@ import dev.combatdata.core.Cdrec;
 import dev.combatdata.core.JumpResetEvaluator;
 import dev.combatdata.core.Retention;
 import dev.combatdata.core.Settings;
+import dev.combatdata.core.Stats;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import static dev.combatdata.core.Lang.t;
@@ -816,7 +817,7 @@ final class SettingsTab implements Tab {
                 for (Recordings.Entry e : Recordings.list()) {
                     if (e.header() == null) continue;
                     try {
-                        all.addAll(JumpResetEvaluator.evaluate(sf.apply(Cdrec.read(e.file()).events()).kept(), params));
+                        all.addAll(JumpResetEvaluator.evaluate(sf.apply(Stats.withoutMovement(Cdrec.read(e.file()).events())).kept(), params));
                         files++;
                     } catch (Exception ex) {
                         CombatDataClient.LOG.warn("[CD] калибровка: не читается {}", e.file().getFileName());

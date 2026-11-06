@@ -70,8 +70,14 @@ public final class WTap {
         boolean reset = false;
         long wOff = -1, wOn = -1, sOn = -1, sOff = -1;
         boolean sprintKey = false;
-        for (InputEvent in : inputs) {
-            if (in.t() <= prev.t()) continue;
+        int lo = 0, hi = inputs.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (inputs.get(mid).t() <= prev.t()) lo = mid + 1;
+            else hi = mid;
+        }
+        for (int i = lo; i < inputs.size(); i++) {
+            InputEvent in = inputs.get(i);
             if (in.t() > a.t()) break;
             switch (in.what()) {
                 case SPRINTING -> { if (in.on()) reset = true; }

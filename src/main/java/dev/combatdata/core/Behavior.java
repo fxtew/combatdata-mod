@@ -149,6 +149,8 @@ public final class Behavior {
             else if (e instanceof PingEvent pe && pe.pingMs() > 0) ourPings.add(pe.pingMs());
         }
         for (List<OtherStateEvent> l : states.values()) l.sort(Comparator.comparingLong(OtherStateEvent::t));
+        // Lookups below search these by time.
+        for (Map<UUID, List<Long>> m : List.of(ownHits, swings, hurts)) for (List<Long> l : m.values()) l.sort(null);
         pos.sort(Comparator.comparingLong(PositionEvent::t));
         List<Stats.Fight> fights = Stats.fights(events, Stats.FIGHT_GAP_MS);
         Map<UUID, Report> out = new LinkedHashMap<>();
@@ -343,8 +345,8 @@ public final class Behavior {
             }
             int attPing = h.attackerPingMs() >= 0 ? h.attackerPingMs() : UNKNOWN_PING_MS;
             long delay = Math.max(0, h.pingMs()) + attPing + rules.at(h.t()).interpMs() + 2 * Cooldown.TICK_MS;
-            List<PositionEvent> me = new ArrayList<>();
-            for (int i = lastPosIndex(pos, h.t()); i >= 0 && h.t() - pos.get(i).t() <= delay; i--) me.add(pos.get(i));
+            List<Geometry.Aabb> me = new ArrayList<>();
+            for (int i = lastPosIndex(pos, h.t()); i >= 0 && h.t() - pos.get(i).t() <= delay; i--) me.add(box(pos.get(i)));
             if (me.isEmpty()) {
                 skipped++;
                 continue;
@@ -361,9 +363,13 @@ public final class Behavior {
                 for (double f = 0; f <= 1.0001 && best > 0; f += k < to ? 0.125 : 2) {
                     Geometry.V3 look = look((float) (o.yaw() + turn * f), (float) (o.pitch() + (next.pitch() - o.pitch()) * f));
                     double ex = o.x() + (next.x() - o.x()) * f, ey = o.y() + (next.y() - o.y()) * f, ez = o.z() + (next.z() - o.z()) * f;
-                    for (double eye : new double[]{PositionEvent.EYE, EYE_SNEAK}) {
-                        Geometry.V3 e = new Geometry.V3(ex, ey + eye, ez);
-                        for (PositionEvent q : me) best = Math.min(best, missDeg(e, look, box(q)));
+                    for (int ei = 0; ei < 2; ei++) {
+                        Geometry.V3 e = new Geometry.V3(ex, ey + (ei == 0 ? PositionEvent.EYE : EYE_SNEAK), ez);
+                        for (Geometry.Aabb q : me) {
+                            // The exact angle is costly; skip boxes that cannot beat the best one even in the best case.
+                            if (missDegLowerBound(e, look, q) >= best) continue;
+                            best = Math.min(best, missDeg(e, look, q));
+                        }
                     }
                 }
             }
@@ -404,34 +410,45 @@ public final class Behavior {
             c[i] = new Geometry.V3((i & 1) == 0 ? box.minX() : box.maxX(), (i & 2) == 0 ? box.minY() : box.maxY(),
                     (i & 4) == 0 ? box.minZ() : box.maxZ()).sub(eye).norm();
         }
-        double best = Math.PI;
+        // The smallest angle is the largest cosine, so acos runs once at the end.
+        double best = -1;
         for (int i = 0; i < 8; i++) {
-            best = Math.min(best, angle(v, c[i]));
-            for (int j = i + 1; j < 8; j++) best = Math.min(best, arcAngle(v, c[i], c[j]));
+            best = Math.max(best, v.dot(c[i]));
+            for (int j = i + 1; j < 8; j++) best = Math.max(best, arcCos(v, c[i], c[j]));
         }
-        return Math.toDegrees(best);
+        return Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, best))));
     }
 
-    /** Angle from unit v to the great-circle arc between unit a and b (the shorter arc). */
-    private static double arcAngle(Geometry.V3 v, Geometry.V3 a, Geometry.V3 b) {
+    /**
+     * Never more than missDeg: the box lies inside the sphere around its centre through its corners, and every
+     * direction into that sphere is within asin(r / d) of the direction to the centre. 0 when the eye is inside it.
+     */
+    static double missDegLowerBound(Geometry.V3 eye, Geometry.V3 look, Geometry.Aabb box) {
+        double hx = (box.maxX() - box.minX()) / 2, hy = (box.maxY() - box.minY()) / 2, hz = (box.maxZ() - box.minZ()) / 2;
+        double cx = box.minX() + hx - eye.x(), cy = box.minY() + hy - eye.y(), cz = box.minZ() + hz - eye.z();
+        double r = Math.sqrt(hx * hx + hy * hy + hz * hz), d = Math.sqrt(cx * cx + cy * cy + cz * cz);
+        double ll = look.len();
+        if (d <= r || ll < 1e-12) return 0;
+        double cos = (cx * look.x() + cy * look.y() + cz * look.z()) / (d * ll);
+        return Math.max(0, Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, cos))) - Math.asin(r / d)));
+    }
+
+    /** Cosine of the angle from unit v to the great-circle arc between unit a and b (the shorter arc). */
+    private static double arcCos(Geometry.V3 v, Geometry.V3 a, Geometry.V3 b) {
         Geometry.V3 n = cross(a, b);
         double nl = n.len();
-        if (nl < 1e-12) return Math.min(angle(v, a), angle(v, b));
+        if (nl < 1e-12) return Math.max(v.dot(a), v.dot(b));
         n = n.scale(1 / nl);
         double vn = v.dot(n);
         Geometry.V3 p = v.sub(n.scale(vn));
-        if (p.len() < 1e-12) return Math.PI / 2;
+        if (p.len() < 1e-12) return 0;
         p = p.norm();
         boolean inside = cross(a, p).dot(n) >= 0 && cross(p, b).dot(n) >= 0;
-        return inside ? angle(v, p) : Math.min(angle(v, a), angle(v, b));
+        return inside ? v.dot(p) : Math.max(v.dot(a), v.dot(b));
     }
 
     private static Geometry.V3 cross(Geometry.V3 a, Geometry.V3 b) {
         return new Geometry.V3(a.y() * b.z() - a.z() * b.y(), a.z() * b.x() - a.x() * b.z(), a.x() * b.y() - a.y() * b.x());
-    }
-
-    private static double angle(Geometry.V3 a, Geometry.V3 b) {
-        return Math.acos(Math.max(-1, Math.min(1, a.dot(b))));
     }
 
     private static PositionEvent lastPos(List<PositionEvent> pos, long t) {
@@ -549,12 +566,19 @@ public final class Behavior {
 
     /** The attacker's swing before this hit (every swing resets the charge), -1 if none. */
     static long prevSwing(IncomingHitEvent h, List<Long> swings) {
-        long prev = -1;
-        for (long t : swings) {
-            if (t >= h.t() - SWING_SELF_MS) break;
-            prev = t;
+        int i = firstAtOrAfter(swings, h.t() - SWING_SELF_MS);
+        return i > 0 ? swings.get(i - 1) : -1;
+    }
+
+    /** Index of the first time not before t in a list sorted by time, size() if none. */
+    static int firstAtOrAfter(List<Long> times, long t) {
+        int lo = 0, hi = times.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (times.get(mid) < t) lo = mid + 1;
+            else hi = mid;
         }
-        return prev;
+        return lo;
     }
 
     /** F: hits this many ticks around the full charge were held back by the cooldown, not by range. */
@@ -737,8 +761,8 @@ public final class Behavior {
     }
 
     private static long firstIn(List<Long> times, long from, long to) {
-        for (long x : times) if (x >= from && x <= to) return x;
-        return -1;
+        int i = firstAtOrAfter(times, from);
+        return i < times.size() && times.get(i) <= to ? times.get(i) : -1;
     }
 
     /** 20 / attack speed (Player.getCurrentItemAttackStrengthDelay) for vanilla items; NaN if unknown. */
@@ -774,8 +798,8 @@ public final class Behavior {
     }
 
     private static boolean near(List<Long> times, long t, long ms) {
-        for (long x : times) if (Math.abs(x - t) <= ms) return true;
-        return false;
+        int i = firstAtOrAfter(times, t - ms);
+        return i < times.size() && times.get(i) <= t + ms;
     }
 
     private static int fightIndex(List<Stats.Fight> fights, long t) {

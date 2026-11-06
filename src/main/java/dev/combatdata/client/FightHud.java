@@ -22,6 +22,10 @@ public final class FightHud {
     private static long checkedFor = Long.MIN_VALUE;
     private static FightSummary.Result shown;
     private static long shownAtWall;
+    private static FightSummary.Result cardFor;
+    private static FightSummary.Style cardStyle;
+    private static boolean cardEnglish;
+    private static Card cached;
 
     private record Seg(String text, int color) {
     }
@@ -74,7 +78,16 @@ public final class FightHud {
             return;
         }
         float fade = Math.min(1f, (show - age) / (float) FADE_MS);
-        Card c = card(mc.font, r, s);
+        FightSummary.Style st = s.fightStyle();
+        boolean en = dev.combatdata.core.Lang.english();
+        // The card only changes with the result, its style or the language, not every frame.
+        if (r != cardFor || !st.equals(cardStyle) || en != cardEnglish) {
+            cardFor = r;
+            cardStyle = st;
+            cardEnglish = en;
+            cached = card(mc.font, r, s);
+        }
+        Card c = cached;
         draw(g, mc.font, box(mc.font, g.guiWidth(), g.guiHeight(), s, c), c, s, fade, false);
     }
 

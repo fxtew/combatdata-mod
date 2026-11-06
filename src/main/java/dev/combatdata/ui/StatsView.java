@@ -2,10 +2,12 @@ package dev.combatdata.ui;
 
 import dev.combatdata.CombatDataClient;
 import dev.combatdata.client.ProgressData;
+import dev.combatdata.client.Tasks;
 import dev.combatdata.core.*;
 import static dev.combatdata.core.Lang.t;
 
 import java.util.*;
+import java.util.function.Supplier;
 
 final class StatsView {
     static final int OVERVIEW = 0, ATTACK = 1, DEFENSE = 2, FIGHTS = 3;
@@ -128,10 +130,104 @@ final class StatsView {
         this.menu = menu;
     }
 
+    /**
+     * Where the recording comes from; the live buffer is copied on the task pool, not on the render thread. rec is the
+     * recording the shown numbers belong to until the new ones are ready.
+     */
+    private Supplier<Recording> source;
+    /** Grows on every new recording or refresh; baseGen is the last one that was not a refresh of the same view. */
+    private int gen, baseGen;
+    /** The shown data belongs to the recording asked for (a live refresh keeps showing the previous buffer meanwhile). */
+    private boolean fresh;
+    private Data applied;
+    private final Tasks.Slot<Data> slot = new Tasks.Slot<>();
+    private RecCounts counts = new RecCounts(0, 0, 0, 0, List.of());
+    private double[] strengths = new double[0], combos = new double[0];
+    private List<AttackEvent> attackList = List.of();
+    private List<IncomingHitEvent> ratedTaken = List.of();
+    private List<Stats.Fight> fights = List.of();
+    private int smallFights;
+
+    private record RecCounts(int attacks, int incoming, int jumps, int markers, List<String> servers) {
+    }
+
+    /** Hits on the aim map: mean point, head and leg counts, yaw and pitch histograms. */
+    private record AimHits(int n, double mu, double mv, int head, int legs, int[] yaw, int[] pitch) {
+        static AimHits of(AimReport.Result r) {
+            double su = 0, sv = 0;
+            int head = 0, legs = 0;
+            List<Double> yaw = new ArrayList<>(), pitch = new ArrayList<>();
+            for (AimReport.Shot s : r.shots()) {
+                if (s.kind() != AimReport.Kind.HIT) continue;
+                su += s.x();
+                sv += s.y();
+                if (s.y() >= HEAD_V) head++;
+                else if (s.y() < LEGS_V) legs++;
+                yaw.add(s.a().aimYawDeg());
+                pitch.add(s.a().aimPitchDeg());
+            }
+            int n = yaw.size();
+            return new AimHits(n, n == 0 ? 0 : su / n, n == 0 ? 0 : sv / n, head, legs,
+                    Stats.histogram(yaw.stream().mapToDouble(Double::doubleValue).toArray(), -15, 15, 15),
+                    Stats.histogram(pitch.stream().mapToDouble(Double::doubleValue).toArray(), -15, 15, 15));
+        }
+    }
+
+    private AimHits aimHits = AimHits.of(AimReport.analyze(List.of()));
+
+    /** What a computation depends on, read on the render thread when it is asked for. */
+    private record Inputs(int gen, Recording rec,Settings s, StatFilter sf, ServerProfile viewAs, UUID opp, String oppName, long timeFrom,
+                          long timeTo, boolean showFails, boolean showNoJump, boolean showMisses, boolean showUnconfirmed,
+                          boolean showFlyOut, boolean showFiltered, boolean showProjectiles, String heavyKey) {
+    }
+
+    /** Everything derived from the recording; built off the render thread, then swapped in whole. */
+    private static final class Data {
+        Inputs in;
+        Rules rules;
+        Rules.Part mainPart;
+        Stats.Result all, res;
+        List<Event> rawEvents, events;
+        List<JumpResetEvaluator.Attempt> attempts;
+        List<Line> timeline;
+        List<Trades.Trade> trades;
+        List<Chart.Point> jrPoints, hitPoints, takenPoints, distPoints = List.of();
+        double takenRange = AttackEvent.DEFAULT_RANGE, rangeLine = AttackEvent.DEFAULT_RANGE;
+        UUID distOpp;
+        String distName;
+        List<Distance.Sample> distSeries = List.of();
+        Chart.Line distLine;
+        double distMean = Double.NaN;
+        List<PositionEvent> replayFrames = List.of();
+        double replaySpan = Replay.MIN_SPAN;
+        Cooldown.Summary cdSum;
+        WTap.Result wtap;
+        AimReport.Result aim;
+        AimHits aimHits;
+        Calibration.Result calib;
+        List<Insights.Insight> insights;
+        Map<UUID, Behavior.Report> behavior;
+        RecCounts counts;
+        double[] strengths, combos;
+        List<AttackEvent> attackList;
+        List<IncomingHitEvent> ratedTaken;
+        List<Stats.Fight> fights;
+        int smallFights;
+        long computeMs;
+    }
+
     void set(Recording r, boolean keepFilter) {
-        rec = r;
+        setSource(() -> r, keepFilter);
+    }
+
+    /** keepFilter: a refresh of the same view (the live buffer); the old numbers stay on screen until the new ones are ready. */
+    void setSource(Supplier<Recording> src, boolean keepFilter) {
+        source = src;
+        gen++;
         key = null;
         if (!keepFilter) {
+            baseGen = gen;
+            fresh = false;
             opp = null;
             oppName = null;
             timeFrom = timeTo = -1;
@@ -147,6 +243,11 @@ final class StatsView {
         }
     }
 
+    /** A computation is running; the live view waits for it instead of replacing it with a newer one. */
+    boolean busy() {
+        return slot.busy();
+    }
+
     /** How long the last full recompute took; the live view uses it to refresh less often on a big buffer. */
     long computeMs() {
         return computeMs;
@@ -157,7 +258,7 @@ final class StatsView {
     }
 
     boolean hasData() {
-        return rec != null;
+        return source != null;
     }
 
     private StatFilter effectiveFilter(Settings s) {
@@ -169,47 +270,194 @@ final class StatsView {
         return sf.weapon();
     }
 
-    private void ensure() {
+    /**
+     * Asks for the numbers of the current recording and view, computed off the render thread, and swaps them in once
+     * ready. False while there is nothing of this recording to show yet.
+     */
+    private boolean ensure() {
+        if (source == null) return false;
         Settings s = CombatDataClient.settings();
         StatFilter cur = effectiveFilter(s);
         ServerProfiles profiles = CombatDataClient.profiles();
         // The profiles version, not their contents: building a key from every profile each frame is wasteful.
-        String k = s.jumpParams() + "/" + s.interpMs + "/" + profiles.version() + "/" + (viewAs == null ? "" : viewAs.address)
-                + "/" + opp + "/" + timeFrom + "/" + timeTo + "/" + showFails
-                + showNoJump + showMisses + showUnconfirmed + showFlyOut + Lang.english() + "/" + cur
-                + showFiltered + "/" + s.tradeParams() + "/" + showProjectiles + "/" + s.behavior + s.behaviorParams();
-        if (k.equals(key)) return;
-        key = k;
+        String heavy = gen + "/" + s.jumpParams() + "/" + s.interpMs + "/" + profiles.version() + "/" + (viewAs == null ? "" : viewAs.address)
+                + "/" + opp + "/" + timeFrom + "/" + timeTo + "/" + Lang.english() + "/" + cur + "/" + s.tradeParams() + "/" + s.behavior
+                + s.behaviorParams() + "/" + s.jrExcludeHeld;
+        String k = heavy + "/" + showFails + showNoJump + showMisses + showUnconfirmed + showFlyOut + showFiltered + showProjectiles;
+        if (!k.equals(key)) {
+            key = k;
+            int g = gen;
+            Supplier<Recording> src = source;
+            Data prev = applied;
+            ServerProfile va = viewAs;
+            UUID o = opp;
+            String on = oppName;
+            long from = timeFrom, to = timeTo;
+            boolean fails = showFails, noJump = showNoJump, misses = showMisses, unconf = showUnconfirmed, flyOut = showFlyOut,
+                    filtered = showFiltered, proj = showProjectiles;
+            slot.request(k, () -> {
+                // A toggle on the same view reuses the copy already made instead of copying the buffer again.
+                Recording r = prev != null && prev.in.gen() == g ? prev.in.rec() : src.get();
+                return compute(new Inputs(g, r, s, cur, va, o, on, from, to, fails, noJump, misses, unconf, flyOut, filtered, proj, heavy), prev);
+            });
+        }
+        Data d = slot.get(k);
+        if (d != null && d != applied) apply(d);
+        return fresh;
+    }
+
+    private void apply(Data d) {
+        applied = d;
+        fresh = d.in.gen() >= baseGen;
+        rec = d.in.rec();
+        sf = d.in.sf();
+        rules = d.rules;
+        mainPart = d.mainPart;
+        all = d.all;
+        res = d.res;
+        rawEvents = d.rawEvents;
+        events = d.events;
+        attempts = d.attempts;
+        timeline = d.timeline;
+        trades = d.trades;
+        jrPoints = d.jrPoints;
+        hitPoints = d.hitPoints;
+        takenPoints = d.takenPoints;
+        takenRange = d.takenRange;
+        rangeLine = d.rangeLine;
+        distOpp = d.distOpp;
+        distName = d.distName;
+        distSeries = d.distSeries;
+        distLine = d.distLine;
+        distMean = d.distMean;
+        distPoints = d.distPoints;
+        boolean noDist = d.distSeries.isEmpty();
+        replayView.set(d.replayFrames, noDist ? null : d.distOpp, noDist ? List.of() : d.attempts, d.replaySpan);
+        cdSum = d.cdSum;
+        wtap = d.wtap;
+        aim = d.aim;
+        aimHits = d.aimHits;
+        calib = d.calib;
+        insights = d.insights;
+        behavior = d.behavior;
+        counts = d.counts;
+        strengths = d.strengths;
+        combos = d.combos;
+        attackList = d.attackList;
+        ratedTaken = d.ratedTaken;
+        fights = d.fights;
+        smallFights = d.smallFights;
+        computeMs = d.computeMs;
+    }
+
+    /**
+     * Runs on the mod's task pool and reads only its inputs. When only the show toggles changed, the stats of the previous
+     * result are reused and just the chart points are rebuilt.
+     */
+    private Data compute(Inputs in, Data prev) {
         long started = System.nanoTime();
-        sf = cur;
-        rules = viewAs != null ? Rules.with(viewAs, s) : Rules.of(rec.events(), profiles, s);
-        mainPart = rules.main(rec.events());
-        all = Stats.compute(rec, rules, Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, sf, s.tradeParams());
-        boolean filtered = opp != null || timeFrom >= 0;
-        Stats.Filter f = !filtered ? Stats.Filter.ALL
-                : new Stats.Filter(timeFrom >= 0 ? timeFrom : 0, timeFrom >= 0 ? timeTo : Long.MAX_VALUE, opp);
-        res = !filtered ? all : Stats.compute(rec, rules, f, AttackEvent.DEFAULT_RANGE, sf, s.tradeParams());
-        rawEvents = Stats.events(rec, f);
-        StatFilter.Applied ap = sf.apply(rawEvents);
-        events = ap.kept();
-        attempts = JumpResetEvaluator.evaluate(events, rules);
-        timeline = buildTimeline();
-        trades = Trades.split(events, s.tradeParams(), sf, attempts);
-        jrPoints = buildJumpPoints(s);
-        hitPoints = buildHitPoints(s);
-        takenPoints = buildTakenPoints();
-        buildDistance();
-        // Intervals use all attacks (a filtered hand hit would otherwise lengthen the interval); only filtered ones go into stats.
-        List<Cooldown.Interval> kept = new ArrayList<>();
-        for (Cooldown.Interval i : Cooldown.intervals(rawEvents)) if (sf.attack(i.attack()) == null) kept.add(i);
-        cdSum = Cooldown.summary(kept);
-        wtap = WTap.analyze(events);
-        aim = AimReport.analyze(events);
-        calib = Calibration.analyze(attempts, mainPart.jump());
-        insights = Insights.evaluate(new Insights.Input(res, mainPart.jump()));
-        // The whole recording, not the time or opponent filter: each opponent is checked on all their hits.
-        behavior = s.behavior ? Behavior.analyze(rec.events(), s.behaviorParams(), rules) : Map.of();
-        computeMs = (System.nanoTime() - started) / 1_000_000L;
+        Data d = new Data();
+        d.in = in;
+        Recording rec = in.rec();
+        Settings s = in.s();
+        StatFilter sf = in.sf();
+        if (prev != null && prev.in.rec() == rec && prev.in.heavyKey().equals(in.heavyKey())) {
+            copyHeavy(prev, d);
+        } else {
+            d.rules = in.viewAs() != null ? Rules.with(in.viewAs(), s) : Rules.of(rec.events(), CombatDataClient.profiles(), s);
+            d.mainPart = d.rules.main(rec.events());
+            d.all = Stats.compute(rec, d.rules, Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, sf, s.tradeParams());
+            boolean filtered = in.opp() != null || in.timeFrom() >= 0;
+            Stats.Filter f = !filtered ? Stats.Filter.ALL
+                    : new Stats.Filter(in.timeFrom() >= 0 ? in.timeFrom() : 0, in.timeFrom() >= 0 ? in.timeTo() : Long.MAX_VALUE, in.opp());
+            d.res = !filtered ? d.all : Stats.compute(rec, d.rules, f, AttackEvent.DEFAULT_RANGE, sf, s.tradeParams());
+            d.rawEvents = Stats.events(rec, f);
+            d.events = sf.apply(d.rawEvents).kept();
+            List<Event> combat = Stats.withoutMovement(d.events);
+            d.attempts = JumpResetEvaluator.evaluate(combat, d.rules);
+            d.fights = Stats.fights(combat, Stats.FIGHT_GAP_MS, sf);
+            d.smallFights = Stats.fights(combat, Stats.FIGHT_GAP_MS).size() - d.fights.size();
+            d.timeline = buildTimeline(combat, d.fights);
+            d.trades = Trades.split(combat, s.tradeParams(), sf, d.attempts);
+            buildDistance(d);
+            // Intervals use all attacks (a filtered hand hit would otherwise lengthen the interval); only filtered ones go into stats.
+            List<Cooldown.Interval> kept = new ArrayList<>();
+            for (Cooldown.Interval i : Cooldown.intervals(Stats.withoutMovement(d.rawEvents))) if (sf.attack(i.attack()) == null) kept.add(i);
+            d.cdSum = Cooldown.summary(kept);
+            d.wtap = WTap.analyze(combat);
+            d.aim = AimReport.analyze(combat);
+            d.aimHits = AimHits.of(d.aim);
+            d.calib = Calibration.analyze(d.attempts, d.mainPart.jump());
+            d.insights = Insights.evaluate(new Insights.Input(d.res, d.mainPart.jump()));
+            // The whole recording, not the time or opponent filter: each opponent is checked on all their hits.
+            d.behavior = s.behavior ? Behavior.analyze(rec.events(), s.behaviorParams(), d.rules) : Map.of();
+            d.counts = countEvents(rec);
+            List<Double> str = new ArrayList<>();
+            List<AttackEvent> attacks = new ArrayList<>();
+            List<IncomingHitEvent> taken = new ArrayList<>();
+            for (Event e : combat) {
+                if (e instanceof AttackEvent a) {
+                    attacks.add(a);
+                    if (a.outcome() == Outcome.HIT_CONFIRMED) str.add((double) a.strength());
+                } else if (e instanceof IncomingHitEvent h && h.rated()) taken.add(h);
+            }
+            d.strengths = str.stream().mapToDouble(Double::doubleValue).toArray();
+            d.combos = Stats.comboLengths(combat).stream().mapToDouble(Integer::doubleValue).toArray();
+            d.attackList = attacks;
+            d.ratedTaken = taken;
+        }
+        d.jrPoints = buildJumpPoints(d);
+        d.hitPoints = buildHitPoints(d);
+        d.takenPoints = buildTakenPoints(d);
+        d.distPoints = buildDistancePoints(d);
+        d.computeMs = (System.nanoTime() - started) / 1_000_000L;
+        return d;
+    }
+
+    private static void copyHeavy(Data p, Data d) {
+        d.rules = p.rules;
+        d.mainPart = p.mainPart;
+        d.all = p.all;
+        d.res = p.res;
+        d.rawEvents = p.rawEvents;
+        d.events = p.events;
+        d.attempts = p.attempts;
+        d.fights = p.fights;
+        d.smallFights = p.smallFights;
+        d.timeline = p.timeline;
+        d.trades = p.trades;
+        d.distOpp = p.distOpp;
+        d.distName = p.distName;
+        d.distSeries = p.distSeries;
+        d.distLine = p.distLine;
+        d.distMean = p.distMean;
+        d.replayFrames = p.replayFrames;
+        d.replaySpan = p.replaySpan;
+        d.cdSum = p.cdSum;
+        d.wtap = p.wtap;
+        d.aim = p.aim;
+        d.aimHits = p.aimHits;
+        d.calib = p.calib;
+        d.insights = p.insights;
+        d.behavior = p.behavior;
+        d.counts = p.counts;
+        d.strengths = p.strengths;
+        d.combos = p.combos;
+        d.attackList = p.attackList;
+        d.ratedTaken = p.ratedTaken;
+    }
+
+    private static RecCounts countEvents(Recording rec) {
+        int attacks = 0, incoming = 0, jumps = 0, markers = 0;
+        Set<String> servers = new LinkedHashSet<>();
+        for (Event e : rec.events()) {
+            if (e instanceof AttackEvent) attacks++;
+            else if (e instanceof IncomingHitEvent) incoming++;
+            else if (e instanceof JumpEvent) jumps++;
+            else if (e instanceof MarkerEvent) markers++;
+            else if (e instanceof SegmentEvent s && s.server() != null) servers.add(s.server());
+        }
+        return new RecCounts(attacks, incoming, jumps, markers, List.copyOf(servers));
     }
 
     private void filter(UUID id, String name) {
@@ -273,7 +521,15 @@ final class StatsView {
     }
 
     void render(Ui ui, int x, int y, int w, int h, Header header) {
-        ensure();
+        if (!ensure()) {
+            px = pw = 0;
+            if (header != null) header.draw(ui, x, y, w);
+            Draw.roundBordered(ui.g, x, y + 24, w, h - 24, Theme.R_PANEL, Theme.BORDER, Theme.PANEL);
+            String msg = slot.busy() ? t("Считаю статистику…", "Computing stats…")
+                    : t("Не удалось посчитать статистику, подробности в latest.log", "Could not compute the stats, see latest.log");
+            ui.textCenter(msg, x + w / 2, y + 24 + (h - 24) / 2 - 4, Theme.MUTED);
+            return;
+        }
         int sw = ui.segmented(x, y, subs(), sub, i -> {
             sub = i;
             scroll = 0;
@@ -671,25 +927,26 @@ final class StatsView {
         }
     }
 
-    private List<Chart.Point> buildTakenPoints() {
+    private List<Chart.Point> buildTakenPoints(Data d) {
         List<Chart.Point> out = new ArrayList<>();
-        takenRange = AttackEvent.DEFAULT_RANGE;
+        StatFilter sf = d.in.sf();
+        d.takenRange = AttackEvent.DEFAULT_RANGE;
         boolean rangeSet = false;
-        for (Event e : rawEvents) {
+        for (Event e : d.rawEvents) {
             if (!(e instanceof IncomingHitEvent h) || !Double.isFinite(h.reach())) continue;
             if (!rangeSet && Double.isFinite(h.range())) {
-                takenRange = h.range();
+                d.takenRange = h.range();
                 rangeSet = true;
             }
             StatFilter.Hidden why = sf.incoming(h);
             int color;
             String what;
             if (why != null) {
-                if (!showFiltered) continue;
+                if (!d.in.showFiltered()) continue;
                 color = Theme.FILTERED;
                 what = t("отфильтровано: ", "filtered: ") + hiddenName(why);
             } else if (!h.rated()) {
-                if (!showProjectiles) continue;
+                if (!d.in.showProjectiles()) continue;
                 color = Theme.DIM;
                 what = t("снаряд", "projectile");
             } else if (h.caught()) {
@@ -705,51 +962,57 @@ final class StatsView {
         return out;
     }
 
-    private void buildDistance() {
-        distOpp = opp != null ? opp : Distance.mainOpponent(events);
-        distName = opp != null ? oppName : null;
-        distSeries = Distance.series(rawEvents, distOpp);
-        distPoints = List.of();
-        distLine = null;
-        distMean = Double.NaN;
-        if (distSeries.isEmpty()) {
-            replayView.set(List.of(), null, List.of());
-            return;
-        }
-        long[] ts = new long[distSeries.size()];
-        double[] vs = new double[distSeries.size()];
+    private static void buildDistance(Data d) {
+        Inputs in = d.in;
+        d.distOpp = in.opp() != null ? in.opp() : Distance.mainOpponent(Stats.withoutMovement(d.events));
+        d.distName = in.opp() != null ? in.oppName() : null;
+        d.distSeries = Distance.series(d.rawEvents, d.distOpp);
+        if (d.distSeries.isEmpty()) return;
+        long[] ts = new long[d.distSeries.size()];
+        double[] vs = new double[d.distSeries.size()];
         double sum = 0;
         for (int i = 0; i < ts.length; i++) {
-            ts[i] = distSeries.get(i).t();
-            vs[i] = distSeries.get(i).d();
+            ts[i] = d.distSeries.get(i).t();
+            vs[i] = d.distSeries.get(i).d();
             sum += vs[i];
         }
-        distMean = sum / ts.length;
-        distLine = new Chart.Line(ts, vs, Theme.MUTED, Distance.MAX_GAP_MS);
+        d.distMean = sum / ts.length;
+        d.distLine = new Chart.Line(ts, vs, Theme.MUTED, Distance.MAX_GAP_MS);
+        for (Event e : d.rawEvents) {
+            if (d.distName != null) break;
+            if (e instanceof AttackEvent a && a.outcome() == Outcome.HIT_CONFIRMED && d.distOpp.equals(a.target())) d.distName = a.targetName();
+            else if (e instanceof IncomingHitEvent h && d.distOpp.equals(h.attacker())) d.distName = h.attackerName();
+        }
+        d.replayFrames = Replay.frames(d.rawEvents, d.distOpp, in.timeFrom() >= 0 ? in.timeFrom() : 0,
+                in.timeFrom() >= 0 ? in.timeTo() : Long.MAX_VALUE);
+        d.replaySpan = Replay.span(d.replayFrames, d.distOpp);
+    }
+
+    private List<Chart.Point> buildDistancePoints(Data d) {
+        if (d.distSeries.isEmpty()) return List.of();
+        StatFilter sf = d.in.sf();
+        boolean showFiltered = d.in.showFiltered();
         List<Chart.Point> out = new ArrayList<>();
-        for (Event e : rawEvents) {
-            if (e instanceof AttackEvent a && a.outcome() == Outcome.HIT_CONFIRMED && distOpp.equals(a.target())) {
-                if (distName == null) distName = a.targetName();
-                double d = Distance.at(distSeries, a.t());
+        for (Event e : d.rawEvents) {
+            if (e instanceof AttackEvent a && a.outcome() == Outcome.HIT_CONFIRMED && d.distOpp.equals(a.target())) {
+                double v = Distance.at(d.distSeries, a.t());
                 StatFilter.Hidden why = sf.attack(a);
-                if (Double.isNaN(d) || (why != null && !showFiltered)) continue;
-                int color = why != null ? Theme.FILTERED : ThreeBlockHit.is(a, rules) ? Theme.AMBER : Theme.GREEN;
-                out.add(new Chart.Point(a.t(), d, color, false, Fmt.clockMs(a.t()) + t(" · ваш удар · ", " · your hit · ")
-                        + Fmt.num(d, 2) + t(" бл.", " bl.") + (why != null ? t(" · отфильтровано", " · filtered") : ""),
+                if (Double.isNaN(v) || (why != null && !showFiltered)) continue;
+                int color = why != null ? Theme.FILTERED : ThreeBlockHit.is(a, d.rules) ? Theme.AMBER : Theme.GREEN;
+                out.add(new Chart.Point(a.t(), v, color, false, Fmt.clockMs(a.t()) + t(" · ваш удар · ", " · your hit · ")
+                        + Fmt.num(v, 2) + t(" бл.", " bl.") + (why != null ? t(" · отфильтровано", " · filtered") : ""),
                         () -> hitDetails(a, CombatDataClient.settings()), a));
-            } else if (e instanceof IncomingHitEvent h && distOpp.equals(h.attacker())) {
-                if (distName == null) distName = h.attackerName();
-                double d = Distance.at(distSeries, h.t());
+            } else if (e instanceof IncomingHitEvent h && d.distOpp.equals(h.attacker())) {
+                double v = Distance.at(d.distSeries, h.t());
                 StatFilter.Hidden why = sf.incoming(h);
-                if (Double.isNaN(d) || (why != null && !showFiltered)) continue;
+                if (Double.isNaN(v) || (why != null && !showFiltered)) continue;
                 int color = why != null ? Theme.FILTERED : h.caught() ? Theme.AMBER : Theme.RED;
-                out.add(new Chart.Point(h.t(), d, color, false, Fmt.clockMs(h.t()) + t(" · его удар · ", " · their hit · ")
-                        + Fmt.num(d, 2) + t(" бл.", " bl.") + (why != null ? t(" · отфильтровано", " · filtered") : ""),
+                out.add(new Chart.Point(h.t(), v, color, false, Fmt.clockMs(h.t()) + t(" · его удар · ", " · their hit · ")
+                        + Fmt.num(v, 2) + t(" бл.", " bl.") + (why != null ? t(" · отфильтровано", " · filtered") : ""),
                         () -> takenDetails(h), h));
             }
         }
-        distPoints = out;
-        replayView.set(Replay.frames(rawEvents, distOpp, timeFrom >= 0 ? timeFrom : 0, timeFrom >= 0 ? timeTo : Long.MAX_VALUE), distOpp, attempts);
+        return out;
     }
 
     private int distanceTab(Ui ui, int x, int y, int w) {
@@ -791,9 +1054,12 @@ final class StatsView {
         };
     }
 
-    private List<Chart.Point> buildJumpPoints(Settings s) {
+    private List<Chart.Point> buildJumpPoints(Data d) {
+        Settings s = d.in.s();
+        StatFilter sf = d.in.sf();
+        boolean showNoJump = d.in.showNoJump(), showFlyOut = d.in.showFlyOut(), showFails = d.in.showFails();
         List<Chart.Point> out = new ArrayList<>();
-        for (JumpResetEvaluator.Attempt a : attempts) {
+        for (JumpResetEvaluator.Attempt a : d.attempts) {
             IncomingHitEvent h = a.hit();
             switch (a.result()) {
                 case NOT_APPLICABLE -> { }
@@ -815,8 +1081,8 @@ final class StatsView {
                 }
             }
         }
-        if (showFiltered) {
-            for (JumpResetEvaluator.Attempt a : JumpResetEvaluator.evaluate(rawEvents, rules)) {
+        if (d.in.showFiltered()) {
+            for (JumpResetEvaluator.Attempt a : JumpResetEvaluator.evaluate(Stats.withoutMovement(d.rawEvents), d.rules)) {
                 IncomingHitEvent h = a.hit();
                 StatFilter.Hidden why = sf.incoming(h);
                 if (why == null || a.result() == JumpResetEvaluator.Result.NOT_APPLICABLE) continue;
@@ -874,19 +1140,23 @@ final class StatsView {
         return j.has(JumpEvent.KEY_SPRINT) ? s + t(", спринт", ", sprint") : s;
     }
 
-    private List<Chart.Point> buildHitPoints(Settings s) {
+    private List<Chart.Point> buildHitPoints(Data d) {
+        Settings s = d.in.s();
+        StatFilter sf = d.in.sf();
+        Rules rules = d.rules;
+        boolean showUnconfirmed = d.in.showUnconfirmed(), showMisses = d.in.showMisses();
         List<Chart.Point> out = new ArrayList<>();
-        rangeLine = AttackEvent.DEFAULT_RANGE;
+        d.rangeLine = AttackEvent.DEFAULT_RANGE;
         boolean rangeSet = false;
-        for (Event e : rawEvents) {
+        for (Event e : d.rawEvents) {
             if (!(e instanceof AttackEvent a)) continue;
             if (!rangeSet && Double.isFinite(a.range())) {
-                rangeLine = a.range();
+                d.rangeLine = a.range();
                 rangeSet = true;
             }
             StatFilter.Hidden why = sf.attack(a);
             if (why != null) {
-                if (showFiltered) out.add(new Chart.Point(a.t(), a.reach(), Theme.FILTERED, false, Fmt.clockMs(a.t()) + " · "
+                if (d.in.showFiltered()) out.add(new Chart.Point(a.t(), a.reach(), Theme.FILTERED, false, Fmt.clockMs(a.t()) + " · "
                         + nz(a.targetName()) + " · " + Fmt.num(a.reach(), 2) + t(" бл. · отфильтровано: ", " bl. · filtered: ")
                         + hiddenName(why), () -> hitDetails(a, s), a));
                 continue;
@@ -1043,30 +1313,44 @@ final class StatsView {
     }
 
     private static final int COMPARE_WITH = 5;
+    private record Comparison(long start, List<Progress.Delta> deltas, int n) {
+    }
+
     private String compareKey;
-    private List<Progress.Delta> deltas = List.of();
-    private int compareN;
+    private final Tasks.Slot<Comparison> compareSlot = new Tasks.Slot<>();
 
     private int compareLine(Ui ui, int x, int y, int w) {
         Settings s = CombatDataClient.settings();
         ProgressData.request(s, false);
         ProgressData.Snapshot snap = ProgressData.snapshot();
-        String want = Progress.cacheKey(s.statFilter(), s, CombatDataClient.profiles(), s.tradeGapMs);
+        String cacheKey = Progress.cacheKey(s.statFilter(), s, CombatDataClient.profiles(), s.tradeGapMs);
         // Not keyed on the recording identity: the live buffer is a new object every second, but recompute is only needed on new events.
-        long lastT = rec.events().isEmpty() ? 0 : rec.events().get(rec.events().size() - 1).t();
-        String k = ProgressData.version() + "/" + want + "/" + rec.wallStartMs() / 60_000 + "/" + rec.events().size() + "/" + lastT;
+        Recording r = rec;
+        long lastT = r.events().isEmpty() ? 0 : r.events().get(r.events().size() - 1).t();
+        String k = ProgressData.version() + "/" + cacheKey + "/" + r.wallStartMs() / 60_000 + "/" + r.events().size() + "/" + lastT
+                + "/" + (snap != null && snap.key().equals(cacheKey));
         if (!k.equals(compareKey)) {
             compareKey = k;
-            deltas = List.of();
-            compareN = 0;
-            if (snap != null && snap.key().equals(want)) {
-                List<Progress.Summary> prev = Progress.previous(snap.summaries(), rec.wallStartMs(), COMPARE_WITH);
-                compareN = prev.size();
-                if (!prev.isEmpty()) deltas = Progress.compare(
-                        Progress.summarize(null, rec, Rules.of(rec.events(), CombatDataClient.profiles(), s), s.statFilter(), s.tradeGapMs, false).all(), prev);
+            if (snap != null && snap.key().equals(cacheKey)) {
+                compareSlot.request(k, () -> {
+                    List<Progress.Summary> prev = Progress.previous(snap.summaries(), r.wallStartMs(), COMPARE_WITH);
+                    if (prev.isEmpty()) return new Comparison(r.wallStartMs(), List.of(), 0);
+                    return new Comparison(r.wallStartMs(), Progress.compare(Progress.summarize(null, r, Rules.of(r.events(), CombatDataClient.profiles(), s),
+                            s.statFilter(), s.tradeGapMs, false).all(), prev), prev.size());
+                });
+            } else {
+                compareSlot.reset();
             }
         }
-        if (deltas.isEmpty()) return y;
+        // While a new comparison is computed the previous line stays, so it does not blink every second on the live buffer.
+        Comparison c = compareSlot.get(k);
+        if (c == null && compareSlot.busy()) {
+            c = compareSlot.latest();
+            if (c != null && c.start() != r.wallStartMs()) c = null;
+        }
+        if (c == null || c.deltas().isEmpty()) return y;
+        List<Progress.Delta> deltas = c.deltas();
+        int compareN = c.n();
         List<String> parts = new ArrayList<>();
         for (Progress.Delta d : deltas) {
             if (parts.size() == 3) break;
@@ -1141,21 +1425,13 @@ final class StatsView {
     }
 
     private Card recordCard() {
-        int attacks = 0, incoming = 0, jumps = 0, markers = 0;
-        Set<String> servers = new LinkedHashSet<>();
-        for (Event e : rec.events()) {
-            if (e instanceof AttackEvent) attacks++;
-            else if (e instanceof IncomingHitEvent) incoming++;
-            else if (e instanceof JumpEvent) jumps++;
-            else if (e instanceof MarkerEvent) markers++;
-            else if (e instanceof SegmentEvent s && s.server() != null) servers.add(s.server());
-        }
+        RecCounts c = counts;
         List<Kv> rows = new ArrayList<>();
         rows.add(new Kv(t("Длительность", "Duration"), Fmt.clock(rec.durationMs())));
-        rows.add(new Kv(t("Атак / получено / прыжков", "Attacks / taken / jumps"), attacks + " / " + incoming + " / " + jumps));
+        rows.add(new Kv(t("Атак / получено / прыжков", "Attacks / taken / jumps"), c.attacks() + " / " + c.incoming() + " / " + c.jumps()));
         rows.add(new Kv(t("Игрок", "Player"), rec.player() == null ? "?" : rec.player()));
-        if (markers > 0) rows.add(new Kv(t("Меток", "Markers"), String.valueOf(markers)));
-        rows.add(new Kv(t("Серверы", "Servers"), servers.isEmpty() ? "—" : String.join(", ", servers)));
+        if (c.markers() > 0) rows.add(new Kv(t("Меток", "Markers"), String.valueOf(c.markers())));
+        rows.add(new Kv(t("Серверы", "Servers"), c.servers().isEmpty() ? "—" : String.join(", ", c.servers())));
         return new Card(t("Запись", "Recording"), rows, 2);
     }
 
@@ -1390,35 +1666,23 @@ final class StatsView {
         int mapW = Math.max((int) Math.round(2 * MAP_HALF_W * k), legendWidth(ui)), cardW = mapW + 12, cardH = sh + 34;
         aimMap(ui, x, y, cardW, sh, k, r);
 
-        List<AttackEvent> hits = new ArrayList<>();
-        for (AimReport.Shot s : r.shots()) if (s.kind() == AimReport.Kind.HIT) hits.add(s.a());
+        AimHits ah = aimHits;
         int rx = x + cardW + 10, rw = w - cardW - 10, ry = y;
-        if (hits.isEmpty()) {
+        if (ah.n() == 0) {
             line(ui, rw, t("Попаданий нет: распределение по телу пустое.", "No hits: the body breakdown is empty."), rx, ry, Theme.DIM);
             ry += LINE;
         } else {
-            double su = 0, sv = 0;
-            int head = 0, legs = 0, n = 0;
-            for (AimReport.Shot s : r.shots()) {
-                if (s.kind() != AimReport.Kind.HIT) continue;
-                n++;
-                su += s.x();
-                sv += s.y();
-                if (s.y() >= HEAD_V) head++;
-                else if (s.y() < LEGS_V) legs++;
-            }
-            double mu = su / n, mv = sv / n;
+            int head = ah.head(), legs = ah.legs(), n = ah.n();
+            double mu = ah.mu(), mv = ah.mv();
             String side = Math.abs(mu) < 0.05 ? t("по центру", "centered") : mu > 0 ? t("правее центра", "right of center") : t("левее центра", "left of center");
             line(ui, rw, t("Средняя точка попаданий: ", "Mean hit point: ") + side + t(", высота ", ", height ") + Fmt.pct(mv * 100), rx, ry, Theme.TEXT);
             ry += LINE;
             line(ui, rw, t("Голова ", "Head ") + Fmt.pct(100.0 * head / n) + t(" · тело ", " · body ") + Fmt.pct(100.0 * (n - head - legs) / n)
                     + t(" · ноги ", " · legs ") + Fmt.pct(100.0 * legs / n), rx, ry, Theme.MUTED);
             ry += LINE + 6;
-            double[] yaw = hits.stream().mapToDouble(AttackEvent::aimYawDeg).toArray();
-            double[] pitch = hits.stream().mapToDouble(AttackEvent::aimPitchDeg).toArray();
-            ry = hist(ui, rx, ry, rw, 30, Stats.histogram(yaw, -15, 15, 15), -15, 2, "°",
+            ry = hist(ui, rx, ry, rw, 30, ah.yaw(), -15, 2, "°",
                     t("Yaw попаданий, ср. |", "Yaw of hits, avg. |") + Fmt.num(res.hits().aimYawAbsMean(), 1) + t("°| (плюс: цель правее прицела)", "°| (plus: target right of the crosshair)"), Theme.GREEN);
-            ry = hist(ui, rx, ry + 4, rw, 30, Stats.histogram(pitch, -15, 15, 15), -15, 2, "°",
+            ry = hist(ui, rx, ry + 4, rw, 30, ah.pitch(), -15, 2, "°",
                     t("Pitch попаданий, ср. |", "Pitch of hits, avg. |") + Fmt.num(res.hits().aimPitchAbsMean(), 1) + t("°| (плюс: цель ниже прицела)", "°| (plus: target below the crosshair)"), Theme.MUTED);
         }
         y = Math.max(y + cardH, ry) + 10;
@@ -1700,10 +1964,7 @@ final class StatsView {
             y += LINE + 1;
         }
         y += 6;
-        List<Double> str = new ArrayList<>();
-        for (Event e : events) if (e instanceof AttackEvent a && a.outcome() == Outcome.HIT_CONFIRMED) str.add((double) a.strength());
-        double[] sa = str.stream().mapToDouble(Double::doubleValue).toArray();
-        y = hist(ui, x, y, w, 40, Stats.histogram(sa, 0, 1.0000001, 10), 0, 10, "%",
+        y = hist(ui, x, y, w, 40, Stats.histogram(strengths, 0, 1.0000001, 10), 0, 10, "%",
                 t("Заряд атаки: средний ", "Attack charge: mean ") + Fmt.pct(hs.strengthMean() * 100) + t(", полный (выше 90%) ", ", full (above 90%) ") + Fmt.pct(hs.fullChargePct()),
                 Theme.ACCENT);
         return y;
@@ -1786,7 +2047,6 @@ final class StatsView {
             ui.text(t("Подтверждённых ударов нет", "No confirmed hits"), x, y, Theme.DIM);
             return y + LINE;
         }
-        double[] combos = Stats.comboLengths(events).stream().mapToDouble(Integer::doubleValue).toArray();
         int[] cc = Stats.histogram(combos, 0.5, 10.5, 10);
         return hist(ui, x, y, w, 40, cc, 1, 1, "",
                 t("Длина серий ударов (до ответного удара): макс. ", "Combo length (until hit back): max ") + c.maxCombo() + t(", последний столбец 10+", ", last column 10+"),
@@ -1899,8 +2159,7 @@ final class StatsView {
         line(ui, w, "3 block hit: " + (t.classified() == 0 ? t("нет данных", "no data") : t.count() + t(" из ", " of ") + t.classified())
                 + t(" · последний столбец: дистанция на экране противника", " · last column: distance on the opponent's screen"), x, y, Theme.MUTED);
         y += LINE + 6;
-        List<AttackEvent> list = new ArrayList<>();
-        for (Event e : events) if (e instanceof AttackEvent a) list.add(a);
+        List<AttackEvent> list = attackList;
         if (list.isEmpty()) {
             ui.text(t("Атак нет", "No attacks"), x, y, Theme.DIM);
             return y + LINE;
@@ -2193,7 +2452,7 @@ final class StatsView {
         return y;
     }
 
-    private List<Line> buildTimeline() {
+    private static List<Line> buildTimeline(List<Event> events, List<Stats.Fight> fights) {
         List<Line> out = new ArrayList<>();
         for (Event e : events) {
             if (e instanceof SegmentEvent s) {
@@ -2203,7 +2462,7 @@ final class StatsView {
             }
         }
         int n = 0;
-        for (Stats.Fight f : Stats.fights(events, Stats.FIGHT_GAP_MS, sf)) {
+        for (Stats.Fight f : fights) {
             n++;
             out.add(new Line(f.startMs(), Fmt.clock(f.startMs()) + "–" + Fmt.clock(f.endMs()),
                     t("Бой ", "Fight ") + n + ": " + String.join(", ", f.opponents()) + t(" · атак ", " · attacks ") + f.attacks() + t(" · нанесено ", " · dealt ")
@@ -2214,11 +2473,11 @@ final class StatsView {
     }
 
     private int fightsTab(Ui ui, int x, int y, int w) {
-        List<Stats.Fight> fights = Stats.fights(events, Stats.FIGHT_GAP_MS, sf);
+        List<Stats.Fight> fights = this.fights;
         line(ui, w, t("Боёв ", "Fights ") + fights.size() + t(" · новый бой после паузы больше ", " · a new fight after a pause over ")
                 + Stats.FIGHT_GAP_MS / 1000 + t(" с без ударов · клик: размены боя", " s without hits · click: trades of the fight"), x, y, Theme.MUTED);
         y += LINE;
-        int small = Stats.fights(events, Stats.FIGHT_GAP_MS).size() - fights.size();
+        int small = smallFights;
         if (sf.minFightHits() > 1) {
             line(ui, w, t("Бои меньше ", "Fights under ") + sf.minFightHits() + t(" подтверждённых ударов не показаны", " confirmed hits are hidden")
                     + (small > 0 ? " (" + small + ")" : ""), x, y, Theme.DIM);
@@ -2287,8 +2546,7 @@ final class StatsView {
         if (narrow) y = header(ui, x, y, w, at, t("Время", "Time"), t("Кто", "Who"), t("Дист.", "Dist."), "3BH");
         else y = header(ui, x, y, w, at, t("Время", "Time"), t("Кто ударил", "Hit by"), t("Оружие", "Weapon"), t("Дист.", "Dist."),
                 t("Его ск.", "Their v"), t("Ваша ск.", "Your v"), t("Пинг", "Ping"));
-        for (Event e : events) {
-            if (!(e instanceof IncomingHitEvent h) || !h.rated()) continue;
+        for (IncomingHitEvent h : ratedTaken) {
             if (visible(y, ROW)) {
                 int dc = h.caught() ? Theme.AMBER : Theme.TEXT;
                 String d = Fmt.num(h.reach(), 2) + (h.caught() ? " !" : "");

@@ -44,7 +44,7 @@ final class ViewTab implements Tab {
         rec = null;
         combat = Recorder.hasCombatEvents();
         stats.setForeign(null, false);
-        stats.set(Recorder.liveCopy(), false);
+        stats.setSource(Recorder::liveCopy, false);
         lastRefresh = System.currentTimeMillis();
     }
 
@@ -102,14 +102,14 @@ final class ViewTab implements Tab {
     private void renderLive(Ui ui, int x, int y, int w, int h) {
         long now = System.currentTimeMillis();
         long ver = Recorder.bufferVersion();
-        // Recompute runs on the render thread: at most once a second and only if the buffer changed (every 5 s anyway, so
-        // the duration keeps updating), and rarer when one recompute is slow, so it stays under about 5% of the time.
+        // Copy and recompute run on the task pool: at most once a second and only if the buffer changed (every 5 s anyway, so
+        // the duration keeps updating), and rarer when one recompute is slow, so the pool is not kept busy.
         long every = Math.max(REFRESH_MS, stats.computeMs() * 20);
-        if (now - lastRefresh >= every && (ver != lastVersion || now - lastRefresh >= Math.max(IDLE_REFRESH_MS, every))) {
+        if (!stats.busy() && now - lastRefresh >= every && (ver != lastVersion || now - lastRefresh >= Math.max(IDLE_REFRESH_MS, every))) {
             lastRefresh = now;
             lastVersion = ver;
             combat = Recorder.hasCombatEvents();
-            stats.set(Recorder.liveCopy(), true);
+            stats.setSource(Recorder::liveCopy, true);
         }
         String server = Recorder.currentServer();
         stats.setNote(t("Текущий буфер ", "Live buffer ") + Fmt.clock(Recorder.shownMs()) + " / " + Fmt.clock(Recorder.capacityMs())
