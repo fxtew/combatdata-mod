@@ -58,6 +58,12 @@ public final class Theme {
         GRID_5 = Themes.mix(INSET, TEXT, 0.11);
     }
 
+    /** Slowly shimmering gold for the author's name; darker on light themes so it stays readable. */
+    public static int author() {
+        double f = 0.5 + 0.5 * Math.sin(System.currentTimeMillis() % 2400 / 2400.0 * 2 * Math.PI);
+        return dark ? Themes.mix(0xFFE0A93A, 0xFFFFE699, f) : Themes.mix(0xFF9A6A00, 0xFFC99A1E, f);
+    }
+
     public static ThemeSpec current() {
         return current;
     }

@@ -162,6 +162,19 @@ public final class CoreTests {
             exact &= Double.doubleToRawLongBits((Double) Json.parse(s)) == Double.doubleToRawLongBits(Double.parseDouble(s));
         }
         check("JSON: числа читаются точно как parseDouble", exact);
+        try {
+            Path hf = Files.createTempFile("cd-header", ".cdrec");
+            UUID author = UUID.fromString("1d33ebee-33c0-470e-9b83-47292866c8ab");
+            Cdrec.write(hf, progRec(0, "s", List.of(atk(100, A, Outcome.HIT_CONFIRMED, 2.5, 1f),
+                    new IncomingHitEvent(200, 0, author, "fatew", true, false, true, 40))), "x");
+            Cdrec.Header hh = Cdrec.readHeader(hf);
+            check("заголовок: UUID противников по порядку имён", hh.opponents().equals(List.of("Alpha", "fatew"))
+                    && A.equals(hh.opponentId(0)) && author.equals(hh.opponentId(1)) && hh.opponentId(5) == null);
+            Files.delete(hf);
+        } catch (Exception ex) {
+            check("заголовок: UUID противников по порядку имён", false);
+        }
+        check("автор по UUID", Author.is(UUID.fromString("1d33ebee-33c0-470e-9b83-47292866c8ab")) && !Author.is(A) && !Author.is(null));
         check("JSON: строки с escape и без", Json.parse("[\"a\\\"b\",\"plain\",\"\"]").equals(List.of("a\"b", "plain", "")));
     }
 
