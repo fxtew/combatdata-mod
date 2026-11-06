@@ -20,8 +20,12 @@ public final class ServerCalibration {
     private final Settings settings;
     private final ServerProfiles profiles;
     private final List<JumpResetEvaluator.Attempt> attempts = new ArrayList<>();
-    private double nH, nV, sH, sV, aH;
-    private int nN, nVN, sN, sVN, aN, recordings;
+    /** Farther or higher than this within KB_MEASURE_MS is a teleport or a respawn, not knockback. */
+    static final double MAX_KB = 5, MAX_RISE = 3;
+
+    private final List<Double> nH = new ArrayList<>(), nV = new ArrayList<>(), sH = new ArrayList<>(), sV = new ArrayList<>(),
+            aH = new ArrayList<>();
+    private int recordings;
 
     public ServerCalibration(ServerProfile profile, ServerProfiles profiles, Settings settings) {
         this.profile = profile;
@@ -52,28 +56,20 @@ public final class ServerCalibration {
         for (JumpResetEvaluator.Attempt a : list) {
             IncomingHitEvent h = a.hit();
             if (a.result() != JumpResetEvaluator.Result.NO_ATTEMPT || !h.knockbackApplied() || h.kindOr() != IncomingHitEvent.Kind.MELEE
-                    || !Double.isFinite(h.kbAway())) continue;
-            aH += h.kbAway();
-            aN++;
+                    || !Double.isFinite(h.kbAway()) || Math.abs(h.kbAway()) > MAX_KB) continue;
+            aH.add(h.kbAway());
             Boolean sprint = sprinting(other, h);
             double rise = rise(pos, h.t());
             if (sprint == null) continue;
-            if (sprint) {
-                sH += h.kbAway();
-                sN++;
-                if (Double.isFinite(rise)) { sV += rise; sVN++; }
-            } else {
-                nH += h.kbAway();
-                nN++;
-                if (Double.isFinite(rise)) { nV += rise; nVN++; }
-            }
+            (sprint ? sH : nH).add(h.kbAway());
+            if (Double.isFinite(rise) && rise <= MAX_RISE) (sprint ? sV : nV).add(rise);
         }
     }
 
     public Result build(long nowMs) {
         Calibration.Result c = Calibration.analyze(attempts, profile.jumpParams(settings));
-        ServerProfile.Knockback kb = new ServerProfile.Knockback(div(nH, nN), div(nV, nVN), nN, div(sH, sN), div(sV, sVN), sN,
-                div(aH, aN), aN, nowMs);
+        ServerProfile.Knockback kb = new ServerProfile.Knockback(median(nH), median(nV), nH.size(), median(sH), median(sV),
+                sH.size(), median(aH), aH.size(), nowMs);
         return new Result(c, kb, recordings);
     }
 
@@ -106,7 +102,10 @@ public final class ServerCalibration {
         return Double.isNaN(base) || Double.isNaN(top) ? Double.NaN : Math.max(0, top - base);
     }
 
-    private static double div(double sum, int n) {
-        return n == 0 ? Double.NaN : sum / n;
+    /** Median, not mean: one teleport or respawn right after a hit would pull a mean far off. */
+    static double median(List<Double> l) {
+        double[] a = new double[l.size()];
+        for (int i = 0; i < a.length; i++) a[i] = l.get(i);
+        return Behavior.median(a);
     }
 }

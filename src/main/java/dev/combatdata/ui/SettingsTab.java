@@ -407,6 +407,16 @@ final class SettingsTab implements Tab {
         y = num(ui, x, y, w, t("Мимо хитбокса: промах больше", "Outside the hitbox: miss above"),
                 t("Сверх шага углов в пакетах (2 × 1.4°)", "On top of the packet angle step (2 × 1.4°)"),
                 draft.bhHbExtraDeg, l.bhHbExtraDeg, DEF.bhHbExtraDeg, "°", 1, v -> draft.bhHbExtraDeg = v);
+        y = num(ui, x, y, w, t("Ровный тайминг: минимум ударов", "Even timing: hits at least"), null,
+                draft.bhTimMin, l.bhTimMin, DEF.bhTimMin, "", 5, v -> draft.bhTimMin = v);
+        y = num(ui, x, y, w, t("Ровный тайминг: ударов в одном тике", "Even timing: hits on one tick"),
+                t("Честно обычно до 55%", "Honest is usually up to 55%"),
+                draft.bhTimTopPct, l.bhTimTopPct, DEF.bhTimTopPct, "%", 5, v -> draft.bhTimTopPct = v);
+        y = num(ui, x, y, w, t("Jump reset противника: минимум ударов", "Opponent jump reset: hits at least"), null,
+                draft.bhJrMin, l.bhJrMin, DEF.bhJrMin, "", 5, v -> draft.bhJrMin = v);
+        y = num(ui, x, y, w, t("Jump reset противника: «очень ровно» от", "Opponent jump reset: \"very even\" from"),
+                t("Только для сведения, в оценку не входит", "Information only, not part of the estimate"),
+                draft.bhJrPct, l.bhJrPct, DEF.bhJrPct, "%", 5, v -> draft.bhJrPct = v);
         return y;
     }
 

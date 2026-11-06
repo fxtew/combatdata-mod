@@ -106,6 +106,15 @@ public final class PositionCapture {
         Recorder.add(new OtherAnimEvent(Recorder.now(), Recorder.tick(), o.getUUID(), OtherAnimEvent.Anim.SWING));
     }
 
+    /** Damage event of our own hit on another player: when the server sent them the knockback too. */
+    public static void onHurt(Entity entity) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        if (!fight || !Recorder.active() || p == null || !(entity instanceof Player o) || o == p
+                || !CombatDataClient.settings().recordPositions) return;
+        Recorder.add(new OtherAnimEvent(Recorder.now(), Recorder.tick(), o.getUUID(), OtherAnimEvent.Anim.HURT));
+    }
+
     private static void reset() {
         fight = false;
         LAST.clear();
