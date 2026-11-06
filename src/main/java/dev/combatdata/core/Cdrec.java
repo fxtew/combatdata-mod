@@ -19,7 +19,20 @@ public final class Cdrec {
 
     public record Header(int schema, String player, UUID playerUuid, String mcVersion, long wallStartMs,
                          long durationMs, int attacks, int hitsConfirmed, int incoming, int jumps, List<String> servers,
-                         List<String> opponents, int notRecorded, Share share, String mod) {
+                         List<String> opponents, int notRecorded, Share share, String mod, List<UUID> opponentIds) {
+        /** opponentIds: same order as opponents, null where unknown; empty in files written before it existed. */
+        public Header(int schema, String player, UUID playerUuid, String mcVersion, long wallStartMs, long durationMs,
+                      int attacks, int hitsConfirmed, int incoming, int jumps, List<String> servers, List<String> opponents,
+                      int notRecorded, Share share, String mod) {
+            this(schema, player, playerUuid, mcVersion, wallStartMs, durationMs, attacks, hitsConfirmed, incoming, jumps,
+                    servers, opponents, notRecorded, share, mod, List.of());
+        }
+
+        /** The opponent's id at index i of opponents, or null. */
+        public UUID opponentId(int i) {
+            return i < opponentIds.size() ? opponentIds.get(i) : null;
+        }
+
         public Header(int schema, String player, UUID playerUuid, String mcVersion, long wallStartMs, long durationMs,
                       int attacks, int hitsConfirmed, int incoming, int jumps, List<String> servers, List<String> opponents,
                       int notRecorded) {
@@ -93,7 +106,7 @@ public final class Cdrec {
             return new Header(i(h, "schema"), s(h, "player"), uuid(h, "uuid"), s(h, "mc"), l(h, "wallStart"),
                     l(h, "duration"), i(sum, "attacks"), i(sum, "hits"), i(sum, "incoming"), i(sum, "jumps"),
                     strList(sum.get("servers")), strList(sum.get("opponents")), Features.parse(h.get("notRecorded")),
-                    Share.fromMap(h.get("share")), s(h, "mod"));
+                    Share.fromMap(h.get("share")), s(h, "mod"), uuidList(sum.get("opponentIds")));
         }
     }
 
@@ -103,15 +116,16 @@ public final class Cdrec {
 
     private static Map<String, Object> header(Recording r, String modVersion) {
         int attacks = 0, hits = 0, incoming = 0, jumps = 0;
-        Set<String> servers = new LinkedHashSet<>(), opp = new LinkedHashSet<>();
+        Set<String> servers = new LinkedHashSet<>();
+        Map<String, UUID> opp = new LinkedHashMap<>();
         for (Event e : r.events()) {
             if (e instanceof AttackEvent a) {
                 attacks++;
                 if (a.outcome() == Outcome.HIT_CONFIRMED) hits++;
-                if (a.targetName() != null) opp.add(a.targetName());
+                if (a.targetName() != null) opp.putIfAbsent(a.targetName(), a.target());
             } else if (e instanceof IncomingHitEvent h) {
                 incoming++;
-                if (h.attackerName() != null) opp.add(h.attackerName());
+                if (h.attackerName() != null) opp.putIfAbsent(h.attackerName(), h.attacker());
             } else if (e instanceof JumpEvent) jumps++;
             else if (e instanceof SegmentEvent s && s.server() != null) servers.add(s.server());
         }
@@ -121,7 +135,10 @@ public final class Cdrec {
         sum.put("incoming", incoming);
         sum.put("jumps", jumps);
         sum.put("servers", new ArrayList<>(servers));
-        sum.put("opponents", new ArrayList<>(opp));
+        sum.put("opponents", new ArrayList<>(opp.keySet()));
+        List<String> ids = new ArrayList<>();
+        for (UUID u : opp.values()) ids.add(str(u));
+        sum.put("opponentIds", ids);
         Map<String, Object> h = new LinkedHashMap<>();
         h.put("format", "combatdata");
         h.put("schema", r.schema());
@@ -261,6 +278,23 @@ public final class Cdrec {
     private static List<String> strList(Object o) {
         List<String> out = new ArrayList<>();
         if (o instanceof List<?> l) for (Object x : l) if (x != null) out.add(x.toString());
+        return out;
+    }
+
+    /** Keeps nulls and bad entries as null so the list stays aligned with the names. */
+    private static List<UUID> uuidList(Object o) {
+        List<UUID> out = new ArrayList<>();
+        if (!(o instanceof List<?> l)) return out;
+        for (Object x : l) {
+            UUID u = null;
+            if (x instanceof String s) {
+                try {
+                    u = UUID.fromString(s);
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+            out.add(u);
+        }
         return out;
     }
 

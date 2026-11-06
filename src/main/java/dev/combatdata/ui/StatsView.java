@@ -1429,7 +1429,7 @@ final class StatsView {
         List<Kv> rows = new ArrayList<>();
         rows.add(new Kv(t("Длительность", "Duration"), Fmt.clock(rec.durationMs())));
         rows.add(new Kv(t("Атак / получено / прыжков", "Attacks / taken / jumps"), c.attacks() + " / " + c.incoming() + " / " + c.jumps()));
-        rows.add(new Kv(t("Игрок", "Player"), rec.player() == null ? "?" : rec.player()));
+        rows.add(new Kv(t("Игрок", "Player"), rec.player() == null ? "?" : rec.player(), nameColor(rec.playerUuid(), Theme.TEXT)));
         if (c.markers() > 0) rows.add(new Kv(t("Меток", "Markers"), String.valueOf(c.markers())));
         rows.add(new Kv(t("Серверы", "Servers"), c.servers().isEmpty() ? "—" : String.join(", ", c.servers())));
         return new Card(t("Запись", "Recording"), rows, 2);
@@ -2091,6 +2091,10 @@ final class StatsView {
     }
 
 
+    private static int nameColor(UUID id, int base) {
+        return Author.is(id) ? Theme.author() : base;
+    }
+
     private static void cols(Ui ui, int x, int y, int w, double[] at, String[] text, int[] color) {
         for (int i = 0; i < text.length; i++) {
             int cx = x + (int) (at[i] * w), next = i + 1 < at.length ? x + (int) (at[i + 1] * w) : x + w;
@@ -2143,7 +2147,7 @@ final class StatsView {
                 String state = (h.groundedAtHit() ? t("на земле", "on ground") : t("в воздухе", "in the air")) + (h.knockbackApplied() ? "" : t(", без нокбэка", ", no knockback"));
                 cols(ui, x, y, w, at, new String[]{Fmt.clockMs(h.t()), result,
                                 a.hasJump() ? Fmt.signed(a.deltaMs(), 0) + t(" мс", " ms") : "—", nz(h.attackerName()), state},
-                        new int[]{Theme.MUTED, rc, Theme.TEXT, Theme.TEXT, Theme.MUTED});
+                        new int[]{Theme.MUTED, rc, Theme.TEXT, nameColor(h.attacker(), Theme.TEXT), Theme.MUTED});
             }
             y += ROW;
         }
@@ -2183,11 +2187,11 @@ final class StatsView {
                 }
                 double od = ThreeBlockHit.classifiable(a, rules.at(a.t()).interpMs()) ? ThreeBlockHit.opponentDistance(a, rules) : Double.NaN;
                 if (narrow) cols(ui, x, y, w, at, new String[]{Fmt.clockMs(a.t()), nz(a.targetName()), out, Fmt.num(a.reach(), 2)},
-                        new int[]{Theme.MUTED, Theme.TEXT, oc, Theme.TEXT});
+                        new int[]{Theme.MUTED, nameColor(a.target(), Theme.TEXT), oc, Theme.TEXT});
                 else cols(ui, x, y, w, at, new String[]{Fmt.clockMs(a.t()), nz(a.targetName()), out, Fmt.num(a.reach(), 2),
                                 typeName(a.type()), Fmt.pct(a.strength() * 100), Fmt.signed(a.aimYawDeg(), 1) + "°",
                                 Double.isNaN(od) ? "—" : "≈ " + Fmt.num(od, 1)},
-                        new int[]{Theme.MUTED, Theme.TEXT, oc, Theme.TEXT, Theme.MUTED, Theme.MUTED, Theme.MUTED,
+                        new int[]{Theme.MUTED, nameColor(a.target(), Theme.TEXT), oc, Theme.TEXT, Theme.MUTED, Theme.MUTED, Theme.MUTED,
                                 tb ? Theme.AMBER : Theme.MUTED});
             }
             y += ROW;
@@ -2213,9 +2217,12 @@ final class StatsView {
                 else if (hov) Draw.round(ui.g, x - 4, y - 3, w + 8, rh, Theme.R_CTRL, Theme.ROW_HOVER);
                 cols(ui, x, y, w, at, new String[]{nz(o.name()), String.valueOf(o.dealt()), String.valueOf(o.missed()),
                                 String.valueOf(o.taken()), Fmt.pct(o.hitRatePct()), o.dealt() == 0 ? "—" : Fmt.num(o.reachMean(), 2)},
-                        new int[]{sel ? Theme.ACCENT : Theme.TEXT_STRONG, Theme.GREEN, Theme.TEXT, Theme.RED, Theme.TEXT, Theme.TEXT});
+                        new int[]{sel ? Theme.ACCENT : nameColor(o.uuid(), Theme.TEXT_STRONG), Theme.GREEN, Theme.TEXT, Theme.RED, Theme.TEXT, Theme.TEXT});
                 UUID id = o.uuid();
                 String nm = o.name();
+                if (Author.is(id) && ui.hover(x, y - 2, Math.min(ui.font.width(nz(nm)), (int) (w * at[1]) - 4), 12)) {
+                    ui.tip(t("Автор Combat Data", "Combat Data author"));
+                }
                 Behavior.Report br = behavior.get(id);
                 if (br != null && br.level() != Behavior.Level.NONE) {
                     int nx = x + Math.min(ui.font.width(nz(o.name())), (int) (w * at[1]) - 10) + 4;
@@ -2551,11 +2558,11 @@ final class StatsView {
                 int dc = h.caught() ? Theme.AMBER : Theme.TEXT;
                 String d = Fmt.num(h.reach(), 2) + (h.caught() ? " !" : "");
                 if (narrow) cols(ui, x, y, w, at, new String[]{Fmt.clockMs(h.t()), nz(h.attackerName()), d, h.caught() ? t("да", "yes") : ""},
-                        new int[]{Theme.MUTED, Theme.TEXT, dc, Theme.AMBER});
+                        new int[]{Theme.MUTED, nameColor(h.attacker(), Theme.TEXT), dc, Theme.AMBER});
                 else cols(ui, x, y, w, at, new String[]{Fmt.clockMs(h.t()), nz(h.attackerName()), weaponName(h.weaponOr()), d,
                                 Fmt.signed(h.attackerTowardBps(), 1), Fmt.signed(h.selfAwayBps(), 1),
                                 h.attackerPingMs() >= 0 ? h.attackerPingMs() + t(" мс", " ms") : "—"},
-                        new int[]{Theme.MUTED, Theme.TEXT, Theme.MUTED, dc, Theme.MUTED, Theme.MUTED, Theme.MUTED});
+                        new int[]{Theme.MUTED, nameColor(h.attacker(), Theme.TEXT), Theme.MUTED, dc, Theme.MUTED, Theme.MUTED, Theme.MUTED});
             }
             y += ROW;
         }
@@ -2629,9 +2636,9 @@ final class StatsView {
                 String first = tr.first() == Trades.Side.ME ? t("вы", "you") : t("он", "they");
                 String score = tr.mine() + ":" + tr.theirs() + " (" + Fmt.num(tr.mineWeight(), 1) + ":" + Fmt.num(tr.theirsWeight(), 1) + ")";
                 if (narrow) cols(ui, x, y, w, at, new String[]{Fmt.clock(tr.startMs()), nz(tr.name()), score + " · " + first, res},
-                        new int[]{Theme.MUTED, Theme.TEXT, Theme.TEXT, rc});
+                        new int[]{Theme.MUTED, nameColor(tr.opponent(), Theme.TEXT), Theme.TEXT, rc});
                 else cols(ui, x, y, w, at, new String[]{Fmt.clockMs(tr.startMs()), nz(tr.name()), first, score, res, causeName(tr.cause())},
-                        new int[]{Theme.MUTED, Theme.TEXT, tr.first() == Trades.Side.ME ? Theme.GREEN : Theme.MUTED, Theme.TEXT, rc, Theme.MUTED});
+                        new int[]{Theme.MUTED, nameColor(tr.opponent(), Theme.TEXT), tr.first() == Trades.Side.ME ? Theme.GREEN : Theme.MUTED, Theme.TEXT, rc, Theme.MUTED});
             }
             y += ROW;
         }
