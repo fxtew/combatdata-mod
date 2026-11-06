@@ -33,6 +33,7 @@ public final class CoreTests {
         insights();
         statFilters();
         progress();
+        compare();
         trades();
         wtap();
         taken();
@@ -1682,6 +1683,109 @@ public final class CoreTests {
         for (int i = 0; i < n; i++) out.add(atkW(t0 + i * 500L, who, i < conf ? Outcome.HIT_CONFIRMED : Outcome.MISS, w,
                 Relation.TEAM_NONE, 40));
         return out;
+    }
+
+    /** A fight with `attacks` attacks of which `hits` hit, ping `ping` (0: none). */
+    static Compare.FightAcc fa(long t, String server, int attacks, int hits, int ping) {
+        Compare.Acc[] acc = new Compare.Acc[Compare.Metric.values().length];
+        Arrays.fill(acc, Compare.Acc.ZERO);
+        acc[Compare.Metric.HIT_RATE.ordinal()] = new Compare.Acc(attacks, hits, hits);
+        if (ping > 0) acc[Compare.Metric.PING.ordinal()] = new Compare.Acc(10, 10.0 * ping, 10.0 * ping * ping);
+        return new Compare.FightAcc(t, server, A, "Alpha", Weapon.SWORD, acc);
+    }
+
+    static Compare.Side sideOf(String label, List<Compare.FightAcc> f) {
+        Progress.Summary s = new Progress.Summary(label, f.isEmpty() ? 0 : f.get(0).startMs(), 1000, List.of(), Progress.Metrics.ZERO, Map.of(), f);
+        return Compare.side(label, List.of(s), null);
+    }
+
+    static void compare() throws Exception {
+        List<Compare.FightAcc> a40 = new ArrayList<>(), b60 = new ArrayList<>(), a40b = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            a40.add(fa(i, "s", 30, 12, 0));
+            a40b.add(fa(i, "s", 30, 12, 0));
+            b60.add(fa(i, "s", 30, 18, 0));
+        }
+        Compare.Row up = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", a40), sideOf("B", b60), 7, 1000, 10_000);
+        check("сравнение: известная разница +20%: лучше, интервал вокруг неё", up.verdict() == Compare.Verdict.BETTER
+                && near(up.diff(), 20, 1e-9) && up.lo() > 0 && up.lo() <= 20 && up.hi() >= 20 && up.reps() == 1000 && !up.fewFights());
+        Compare.Row down = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", b60), sideOf("B", a40), 7, 1000, 10_000);
+        check("сравнение: обратно: хуже", down.verdict() == Compare.Verdict.WORSE && near(down.diff(), -20, 1e-9));
+        check("сравнение: одинаковые стороны: в пределах случайности",
+                Compare.row(Compare.Metric.HIT_RATE, sideOf("A", a40), sideOf("B", a40b), 7, 1000, 10_000).verdict() == Compare.Verdict.SAME);
+        Compare.Row r1 = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", a40), sideOf("B", b60), 7, 1000, 10_000);
+        check("сравнение: фиксированное зерно даёт тот же интервал", r1.lo() == up.lo() && r1.hi() == up.hi());
+        Compare.Row few = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", a40), sideOf("B", List.of(fa(0, "s", 20, 15, 0))), 7, 1000, 10_000);
+        check("сравнение: меньше 30 атак: мало данных", few.verdict() == Compare.Verdict.FEW && Double.isNaN(few.b()) && few.nB() == 20);
+        List<Compare.FightAcc> three = List.of(fa(0, "s", 40, 30, 0), fa(1, "s", 40, 30, 0), fa(2, "s", 40, 30, 0));
+        Compare.Row ff = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", a40), sideOf("B", three), 7, 1000, 10_000);
+        check("сравнение: меньше 5 боёв: интервал по ударам с пометкой", ff.fewFights() && ff.reps() == 0
+                && ff.verdict() == Compare.Verdict.BETTER && near(ff.diff(), 35, 1e-9));
+        // Hits of a fight are related: all-or-nothing fights make a per-hit interval far too narrow.
+        List<Compare.FightAcc> ca = new ArrayList<>(), cb = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            ca.add(fa(i, "s", 100, i < 5 ? 100 : 0, 0));
+            cb.add(fa(i, "s", 100, i < 5 ? 100 : i == 9 ? 50 : 0, 0));
+        }
+        Compare.Acc ta = sideOf("A", ca).total(Compare.Metric.HIT_RATE), tb = sideOf("B", cb).total(Compare.Metric.HIT_RATE);
+        double[] ph = Compare.perHit(Compare.Metric.HIT_RATE, ta, tb);
+        Compare.Row cr = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", ca), sideOf("B", cb), 7, 1000, 10_000);
+        check("сравнение: бутстрэп по боям, а не по ударам", ph[0] > 0 && cr.verdict() == Compare.Verdict.SAME && cr.lo() < -20);
+        double[] nc = Compare.newcombe(48, 80, 56, 70);
+        check("сравнение: интервал Ньюкомба (пример из статьи 56/70 против 48/80)", near(nc[0], 0.0524, 5e-4) && near(nc[1], 0.3339, 5e-4));
+        Compare.Row budget = Compare.row(Compare.Metric.HIT_RATE, sideOf("A", a40), sideOf("B", b60), 7, 1000, 0);
+        check("сравнение: без времени на бутстрэп: формула по ударам", budget.reps() < 1000 && budget.verdict() == Compare.Verdict.BETTER);
+        // Mean and sigma.
+        Compare.Acc[] jr = new Compare.Acc[Compare.Metric.values().length];
+        Arrays.fill(jr, Compare.Acc.ZERO);
+        Compare.Acc t = Compare.Acc.ZERO;
+        for (int i = 0; i < 10; i++) t = t.add(i % 2 == 0 ? 0 : 100);
+        check("сравнение: σ тайминга", near(Compare.Metric.JR_SIGMA.value(t), 50, 1e-9) && near(Compare.Metric.JR_MEAN.value(t), 50, 1e-9)
+                && Compare.Metric.JR_SIGMA.source() == Compare.Metric.JR_MEAN);
+        // Ranking and warnings.
+        List<Compare.Row> rows = Compare.compare(sideOf("A", a40), sideOf("B", b60), 7);
+        check("сравнение: строка на каждую метрику, «сильнее всего» только значимые", rows.size() == Compare.Metric.values().length
+                && Compare.strongest(rows, 3).equals(List.of(rows.get(Compare.Metric.HIT_RATE.ordinal()))));
+        List<Compare.FightAcc> pa = new ArrayList<>(), pb = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            pa.add(fa(i, "a.net", 30, 12, 40));
+            pb.add(fa(i, "b.net", 30, 12, 130));
+        }
+        Progress.Summary sa = new Progress.Summary("a", 0, 1, List.of("a.net"), Progress.Metrics.ZERO, Map.of(), pa);
+        Progress.Summary sb = new Progress.Summary("b", 0, 1, List.of("b.net"), Progress.Metrics.ZERO, Map.of(), pb);
+        check("сравнение: предупреждения о пинге и сервере", Compare.warnings(Compare.side("A", List.of(sa), null),
+                Compare.side("B", List.of(sb), null)).equals(List.of(Compare.Warning.PING, Compare.Warning.SERVER))
+                && Compare.warnings(sideOf("A", a40), sideOf("B", b60)).isEmpty());
+        // Fights from events, the summary and the cache.
+        List<Event> ev = new ArrayList<>(swings(1000, A, 10, 4, Weapon.SWORD));
+        ev.addAll(swings(40_000, B, 8, 6, Weapon.AXE));
+        ev.add(new PingEvent(1500, 60));
+        ev.sort(Comparator.comparingLong(Event::t));
+        Progress.Summary s = Progress.summarize("c.cdrec", progRec(0, "S1", ev), JumpResetEvaluator.Params.DEFAULT, 100, StatFilter.NONE);
+        Compare.FightAcc f0 = s.fights().get(0), f1 = s.fights().get(1);
+        check("сравнение: итоги по боям из событий", s.fights().size() == 2 && f0.get(Compare.Metric.HIT_RATE).n() == 10
+                && f0.get(Compare.Metric.HIT_RATE).sum() == 4 && f0.opponent().equals(A) && f0.weapon() == Weapon.SWORD
+                && "S1".equals(f0.server()) && f1.opponent().equals(B) && f1.weapon() == Weapon.AXE
+                && f0.get(Compare.Metric.PING).n() == 1 && f1.get(Compare.Metric.PING).n() == 0);
+        Path cf = Files.createTempFile("cdcmp", ".json");
+        ProgressCache c = new ProgressCache();
+        c.put("c.cdrec", 1, "k", s);
+        c.save(cf);
+        check("сравнение: итоги боёв переживают кэш", s.equals(ProgressCache.load(cf).get("c.cdrec", 1, "k")));
+        Files.deleteIfExists(cf);
+        // Group presets.
+        long day = 86_400_000L, now = 100 * day;
+        Progress.Summary old = new Progress.Summary("old", now - 10 * day, 1, List.of("x"), Progress.Metrics.ZERO, Map.of(), List.of(fa(1, "x", 30, 10, 0)));
+        Progress.Summary mid = new Progress.Summary("mid", now - 3 * day, 1, List.of("y"), Progress.Metrics.ZERO, Map.of(), List.of(fa(2, "y", 30, 10, 0)));
+        Progress.Summary ancient = new Progress.Summary("anc", now - 20 * day, 1, List.of("x"), Progress.Metrics.ZERO, Map.of(), List.of(fa(0, "x", 30, 10, 0)));
+        List<Progress.Summary> all = List.of(ancient, old, mid);
+        Compare.Side[] wk = Compare.lastDays(all, now, 7, "A", "B");
+        check("сравнение: 7 дней против предыдущих 7", wk[0].sources().equals(List.of(old)) && wk[1].sources().equals(List.of(mid)));
+        Compare.Side[] sv = Compare.serverVsRest(all, "x", "rest");
+        check("сравнение: сервер против остальных по боям", sv[1].fights().size() == 2 && sv[0].fights().size() == 1
+                && sv[0].sources().equals(List.of(mid)));
+        Compare.Side[] nm = Compare.norm(all, mid, 10, "norm");
+        check("сравнение: запись против нормы из прошлых", nm[0].sources().size() == 2 && nm[1].sources().equals(List.of(mid)));
     }
 
     static void progress() throws Exception {

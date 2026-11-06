@@ -62,9 +62,7 @@ public final class ProgressData {
         running = true;
         stale = false;
         runningKey = key;
-        Thread t = new Thread(() -> run(key, sf, snap, profiles, gap), "combatdata-progress");
-        t.setDaemon(true);
-        t.start();
+        Tasks.run(() -> run(key, sf, snap, profiles, gap));
     }
 
     private static void run(String key, StatFilter sf, Settings s, ServerProfiles profiles, long gap) {

@@ -431,6 +431,16 @@ final class RecordingsTab implements Tab {
         bw = ui.buttonWidth(delL);
         bx -= bw + 4;
         ui.button(bx, fy, bw, 16, delL, Ui.Kind.DANGER, !picked.isEmpty(), this::deleteMarked);
+        String cmpL = t("Сравнить", "Compare");
+        bw = ui.buttonWidth(cmpL);
+        bx -= bw + 4;
+        boolean two = picked.size() == 2 && picked.get(0).header() != null && picked.get(1).header() != null;
+        ui.button(bx, fy, bw, 16, cmpL, Ui.Kind.PRIMARY, two, () -> {
+            String a = picked.get(0).file().getFileName().toString(), b = picked.get(1).file().getFileName().toString();
+            cancelSelection();
+            menu.compareRecordings(a, b);
+        });
+        if (ui.hover(bx, fy, bw, 16) && !two) ui.tip(t("Отметьте ровно две записи", "Tick exactly two recordings"));
         bw = ui.buttonWidth(allL);
         bx -= bw + 4;
         ui.button(bx, fy, bw, 16, allL, Ui.Kind.GHOST, !shown.isEmpty(), () -> {
