@@ -21,7 +21,8 @@ import java.util.*;
  * C, no knockback. After our confirmed hit the opponent must fly off about as far as we do on this server (measured
  * knockback in the server profile, normal or sprint). Their movement reaches us later than our hit by our ping plus
  * theirs (the server sends them the knockback, their client moves, the server relays it), so the window starts at
- * our ping and takes the farthest point within their ping + 100 ms + KB_MEASURE_MS: in their favour.
+ * our ping and takes the farthest point within their ping + 100 ms + KB_MEASURE_MS: in their favour. Hits followed
+ * by their jump reset, or taken while running at us, honestly fly short and are not rated.
  *
  * D, reach. ThreeBlockHit the other way round: on their screen we were where we were up to L ago. Only corrections
  * that shorten the distance are applied (our movement away from them, theirs towards us), with the longest plausible
@@ -29,33 +30,52 @@ import java.util.*;
  *
  * E, hits outside the hitbox. Their look from packets (steps of 360/256 degrees, truncated) against our hitbox anywhere
  * within the delay; the smallest miss over those moments and both eye heights (standing, sneaking) counts.
+ *
+ * F, too even timing, and G, jump reset: see timing and jumpReset. G is information only.
  */
 public final class Behavior {
-    public enum Check { CRITICALS, KEEP_SPRINT, VELOCITY, REACH, HITBOX }
+    /** JUMP_RESET is information only: it never counts towards the level. */
+    public enum Check { CRITICALS, KEEP_SPRINT, VELOCITY, REACH, HITBOX, TIMING, JUMP_RESET }
 
     public enum Level { NONE, ODD, MANY }
 
-    /** Why a check could not run at all. NO_KB: the server profile has too little measured knockback. */
-    public enum Missing { NONE, NO_DATA, TOO_FEW, NO_KB }
+    /**
+     * Why a check could not run at all. NO_KB: the server profile has too little measured knockback.
+     * KB_LIKE_JUMP: this server's knockback lifts as high as a jump, so a jump reset cannot be told apart.
+     */
+    public enum Missing { NONE, NO_DATA, TOO_FEW, NO_KB, KB_LIKE_JUMP }
 
     public record Params(int critMin, double critFlat, long critLookMs, int ksMin, int ksSharePct, int ksRatioPct,
                          int velMin, int velSharePct, int velPct, int reachMin, int reachSharePct, double reachExtra,
-                         int hbMin, double hbExtraDeg) {
-        public static final Params DEFAULT = new Params(3, 0.01, 500, 5, 80, 95, 5, 70, 30, 3, 20, 0.3, 3, 10);
+                         int hbMin, double hbExtraDeg, int timMin, int timTopPct, double timLateTicks, int jrMin,
+                         int jrPct) {
+        public static final Params DEFAULT = new Params(3, 0.01, 500, 5, 80, 95, 8, 70, 30, 3, 20, 0.3, 3, 10,
+                20, 75, 1, 15, 95);
+
+        public Params(int critMin, double critFlat, long critLookMs, int ksMin, int ksSharePct, int ksRatioPct,
+                      int velMin, int velSharePct, int velPct, int reachMin, int reachSharePct, double reachExtra,
+                      int hbMin, double hbExtraDeg) {
+            this(critMin, critFlat, critLookMs, ksMin, ksSharePct, ksRatioPct, velMin, velSharePct, velPct, reachMin,
+                    reachSharePct, reachExtra, hbMin, hbExtraDeg, 20, 75, 1, 15, 95);
+        }
 
         public Params(int critMin, double critFlat, long critLookMs, int ksMin, int ksSharePct, int ksRatioPct) {
-            this(critMin, critFlat, critLookMs, ksMin, ksSharePct, ksRatioPct, 5, 70, 30, 3, 20, 0.3, 3, 10);
+            this(critMin, critFlat, critLookMs, ksMin, ksSharePct, ksRatioPct, 8, 70, 30, 3, 20, 0.3, 3, 10);
         }
     }
 
     /**
      * value: A height change (blocks), B speed ratio, C knockback share of expected, D distance on their screen
-     * (blocks), E miss angle (degrees). groundStates: A only.
+     * (blocks), E miss angle (degrees), G jump time against their usual knockback lift (ms, minus is earlier; NaN if
+     * unknown). groundStates: A only.
      */
     public record Case(long t, double value, double reach, int pingMs, int attackerPingMs, int groundStates, int states) {
     }
 
-    /** checked: hits the check could rate; skipped: hits without data; values: the rated value of every checked hit. */
+    /**
+     * checked: hits the check could rate; skipped: hits without data; values: the rated value of every checked hit.
+     * maxPerFight: most cases in one fight; for JUMP_RESET the resets on the knockback tick.
+     */
     public record Result(Check check, List<Case> cases, int checked, int skipped, boolean flagged, int maxPerFight,
                          Missing missing, double[] values) {
         public Result(Check check, List<Case> cases, int checked, int skipped, boolean flagged, int maxPerFight, Missing missing) {
@@ -109,7 +129,7 @@ public final class Behavior {
         Map<UUID, List<OtherStateEvent>> states = new HashMap<>();
         Map<UUID, List<IncomingHitEvent>> hits = new LinkedHashMap<>();
         Map<UUID, String> names = new HashMap<>();
-        Map<UUID, List<Long>> ownHits = new HashMap<>(), swings = new HashMap<>();
+        Map<UUID, List<Long>> ownHits = new HashMap<>(), swings = new HashMap<>(), hurts = new HashMap<>();
         Map<UUID, List<AttackEvent>> myHits = new HashMap<>();
         List<PositionEvent> pos = new ArrayList<>();
         List<Integer> ourPings = new ArrayList<>();
@@ -117,6 +137,8 @@ public final class Behavior {
             if (e instanceof OtherStateEvent o) states.computeIfAbsent(o.id(), k -> new ArrayList<>()).add(o);
             else if (e instanceof OtherAnimEvent w && w.anim() == OtherAnimEvent.Anim.SWING) {
                 swings.computeIfAbsent(w.id(), k -> new ArrayList<>()).add(w.t());
+            } else if (e instanceof OtherAnimEvent w && w.anim() == OtherAnimEvent.Anim.HURT) {
+                hurts.computeIfAbsent(w.id(), k -> new ArrayList<>()).add(w.t());
             } else if (e instanceof IncomingHitEvent h && h.attacker() != null && h.kindOr() == IncomingHitEvent.Kind.MELEE) {
                 hits.computeIfAbsent(h.attacker(), k -> new ArrayList<>()).add(h);
                 if (h.attackerName() != null) names.put(h.attacker(), h.attackerName());
@@ -139,7 +161,9 @@ public final class Behavior {
                     keepSprint(en.getValue(), st, ownHits.getOrDefault(id, List.of()), swings.getOrDefault(id, List.of()), p),
                     velocity(mine, st, pos, rules, fights, p),
                     reach(en.getValue(), rules, fights, p),
-                    hitbox(en.getValue(), st, pos, rules, fights, p));
+                    hitbox(en.getValue(), st, pos, rules, fights, p),
+                    timing(en.getValue(), swings.getOrDefault(id, List.of()), p),
+                    jumpReset(mine, st, hurts.getOrDefault(id, List.of()), rules, p));
             out.put(id, new Report(id, names.get(id), level(rs, p), rs, context(en.getValue(), mine, st, ourPings)));
         }
         return out;
@@ -213,10 +237,14 @@ public final class Behavior {
             }
             OtherStateEvent s0 = st.get(i0);
             if (!s0.onGround()) continue;
+            // A jump reset honestly cuts the knockback; the server profile is measured without jumps too.
+            int up = firstAirborne(st, i0, t1);
+            if (up >= 0 && takeOff(st.get(up).y() - st.get(up - 1).y(), st.get(up).tick() - st.get(up - 1).tick()) == 1) continue;
             double ux = s0.x() - me.x(), uz = s0.z() - me.z(), len = Math.hypot(ux, uz);
             if (len < 1e-6) continue;
             ux /= len;
             uz /= len;
+            if (towardUs(st, i0, ux, uz) > VEL_TOWARD) continue;
             double far = 0;
             int seen = 0;
             for (int k = i0 + 1; k < st.size() && st.get(k).t() <= t1; k++) {
@@ -237,6 +265,24 @@ public final class Behavior {
         Missing m = checked > 0 ? (checked < p.velMin() ? Missing.TOO_FEW : Missing.NONE)
                 : noKb > 0 ? Missing.NO_KB : skipped > 0 ? Missing.NO_DATA : Missing.TOO_FEW;
         return new Result(Check.VELOCITY, List.copyOf(cases), checked, skipped, flagged, cases.size(), m, arr(values));
+    }
+
+    /**
+     * C: knockback only halves the speed a player already has (LivingEntity.knockback), so one running into us flies
+     * off much less while still holding forward. Hits faster than this towards us (blocks per tick) are not rated.
+     */
+    static final double VEL_TOWARD = 0.1;
+
+    /** Speed towards us before sample i, from the sample at least two ticks earlier; (ux, uz) points away from us. */
+    static double towardUs(List<OtherStateEvent> st, int i, double ux, double uz) {
+        OtherStateEvent b = st.get(i);
+        for (int k = i - 1; k >= 0; k--) {
+            OtherStateEvent a = st.get(k);
+            int ticks = b.tick() - a.tick();
+            if (b.t() - a.t() > STALE_MS) break;
+            if (ticks >= 2) return -((b.x() - a.x()) * ux + (b.z() - a.z()) * uz) / ticks;
+        }
+        return 0;
     }
 
     /** Weapons with the usual 3 block reach; spears and unknown items are skipped. */
@@ -416,7 +462,7 @@ public final class Behavior {
         int flagged = 0;
         boolean strong = false;
         for (Result r : rs) {
-            if (!r.flagged()) continue;
+            if (!r.flagged() || r.check() == Check.JUMP_RESET) continue;
             flagged++;
             if (r.check() == Check.CRITICALS && r.maxPerFight() >= 2 * p.critMin()) strong = true;
         }
@@ -497,12 +543,202 @@ public final class Behavior {
     static boolean charged(IncomingHitEvent h, List<Long> swings) {
         double cd = cooldownTicks(h.weaponOr(), h.attackerItem());
         if (Double.isNaN(cd)) return true;
+        long prev = prevSwing(h, swings);
+        return prev < 0 || (h.t() - prev) >= Cooldown.CHARGED * cd * Cooldown.TICK_MS;
+    }
+
+    /** The attacker's swing before this hit (every swing resets the charge), -1 if none. */
+    static long prevSwing(IncomingHitEvent h, List<Long> swings) {
         long prev = -1;
         for (long t : swings) {
             if (t >= h.t() - SWING_SELF_MS) break;
             prev = t;
         }
-        return prev < 0 || (h.t() - prev) >= Cooldown.CHARGED * cd * Cooldown.TICK_MS;
+        return prev;
+    }
+
+    /** F: hits this many ticks around the full charge were held back by the cooldown, not by range. */
+    static final double TIM_WINDOW_TICKS = 3;
+
+    /**
+     * F, too even timing. The damage event and the attacker's swings reach us the same way, so the time between the
+     * previous swing and the hit is exact to the server tick. The server handles attacks once per tick, so clicking
+     * fast after the charge already lands most hits on one or two ticks (honest players: up to about 55% on one
+     * tick within 20 hits); a triggerbot that hits at the full charge lands nearly all on one.
+     * values: lateness of each counted hit in ticks against the full charge (minus is early).
+     */
+    static Result timing(List<IncomingHitEvent> hits, List<Long> swings, Params p) {
+        List<Double> values = new ArrayList<>();
+        int skipped = 0;
+        for (IncomingHitEvent h : hits) {
+            double cd = cooldownTicks(h.weaponOr(), h.attackerItem());
+            if (Double.isNaN(cd)) continue;
+            long prev = prevSwing(h, swings);
+            if (prev < 0) {
+                skipped++;
+                continue;
+            }
+            double late = Math.round((h.t() - prev) / (double) Cooldown.TICK_MS) - cd;
+            if (Math.abs(late) <= TIM_WINDOW_TICKS) values.add(late);
+        }
+        double[] v = arr(values);
+        boolean flagged = v.length >= p.timMin() && topTickShare(v) * 100 >= p.timTopPct() && median(v) <= p.timLateTicks();
+        Missing m = v.length == 0 && skipped > 0 ? Missing.NO_DATA : v.length < p.timMin() ? Missing.TOO_FEW : Missing.NONE;
+        return new Result(Check.TIMING, List.of(), v.length, skipped, flagged, 0, m, v);
+    }
+
+    /** Share of values on the most common tick. */
+    public static double topTickShare(double[] v) {
+        if (v.length == 0) return 0;
+        Map<Long, Integer> count = new HashMap<>();
+        int best = 0;
+        for (double x : v) best = Math.max(best, count.merge(Math.round(x * 2), 1, Integer::sum));
+        return best / (double) v.length;
+    }
+
+    public static double median(double[] v) {
+        if (v.length == 0) return Double.NaN;
+        double[] s = v.clone();
+        Arrays.sort(s);
+        return s.length % 2 == 1 ? s[s.length / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    }
+
+    /** G: vertical speed after a jump and after a knockback lift on ground (normal hit, sprint hit), vanilla. */
+    static final double JUMP_VY = 0.42, KB_VY_NORMAL = 0.361, KB_VY_SPRINT = 0.4;
+    static final double RISE_TOL = 0.006;
+    /** G: the take-off is looked for this long after their ping. */
+    static final long JR_LOOK_MS = 400;
+
+    /** Height after n ticks starting with vertical speed vy: move, then gravity 0.08 and drag 0.98. */
+    static double rise(double vy, int ticks) {
+        double y = 0;
+        for (int i = 0; i < ticks; i++) {
+            y += vy;
+            vy = (vy - 0.08) * 0.98;
+        }
+        return y;
+    }
+
+    static double peak(double vy) {
+        double y = 0, best = 0;
+        for (int i = 0; i < 40 && vy > 0; i++) {
+            y += vy;
+            best = Math.max(best, y);
+            vy = (vy - 0.08) * 0.98;
+        }
+        return best;
+    }
+
+    /**
+     * 1 a jump, 0 a knockback lift, -1 neither (effects, another server knockback, odd terrain). The tick count comes
+     * from our arrival ticks, so one tick either way is allowed.
+     */
+    static int takeOff(double rise, int ticks) {
+        boolean jump = false, kb = false;
+        for (int n = Math.max(1, ticks - 1); n <= Math.max(1, Math.min(4, ticks + 1)); n++) {
+            if (Math.abs(rise - rise(JUMP_VY, n)) <= RISE_TOL) jump = true;
+            if (Math.abs(rise - rise(KB_VY_NORMAL, n)) <= RISE_TOL || Math.abs(rise - rise(KB_VY_SPRINT, n)) <= RISE_TOL) kb = true;
+        }
+        return jump == kb ? -1 : jump ? 1 : 0;
+    }
+
+    /** The server profile measured our knockback lifting about as high as a jump. */
+    static boolean kbLikeJump(Rules rules, long t) {
+        ServerProfile prof = rules.at(t).profile();
+        if (prof == null) return false;
+        ServerProfile.Knockback k = prof.kb;
+        double top = peak(JUMP_VY) - 0.03;
+        return k.normalN() >= ServerCalibration.MIN_KB && k.normalV() >= top
+                || k.sprintN() >= ServerCalibration.MIN_KB && k.sprintV() >= top;
+    }
+
+    private record TakeOff(AttackEvent hit, long ref, long delay, int ourPing, int oppPing) {
+    }
+
+    /**
+     * G, jump reset of the opponent, information only. Knockback lifts a player on ground by 0.361 (0.400 after a
+     * sprint hit) in the first tick, a jump by 0.42 (LivingEntity.jumpFromGround takes the larger speed), so the first
+     * airborne packet after our hit tells which one it was. The take-off reaches us their ping after the damage event
+     * (HURT, or our hit plus our ping in older recordings); a reset on the knockback tick arrives when their lift
+     * would have, so its time is compared with their nearest lifts. Strong players reset a lot; even a bot cannot
+     * look tighter than one tick here.
+     * Cases: every reset, value = ms against their usual lift (NaN without lifts to compare with).
+     */
+    static Result jumpReset(List<AttackEvent> mine, List<OtherStateEvent> st, List<Long> hurts, Rules rules, Params p) {
+        List<TakeOff> jumps = new ArrayList<>(), lifts = new ArrayList<>();
+        int skipped = 0, likeJump = 0;
+        for (int n = 0; n < mine.size(); n++) {
+            AttackEvent a = mine.get(n);
+            if (kbLikeJump(rules, a.t())) {
+                likeJump++;
+                continue;
+            }
+            int ourPing = Math.max(0, a.pingMs()), oppPing = a.targetPingMs() >= 0 ? a.targetPingMs() : UNKNOWN_PING_MS;
+            long ref = firstIn(hurts, a.t(), a.t() + Math.max(400, 2L * ourPing + 200));
+            if (ref < 0) ref = a.t() + ourPing;
+            int i0 = lastAtOrBefore(st, ref);
+            if (i0 < 0 || ref - st.get(i0).t() > STALE_MS) {
+                skipped++;
+                continue;
+            }
+            if (!st.get(i0).onGround()) continue;
+            long end = ref + oppPing + 100 + JR_LOOK_MS;
+            int k = firstAirborne(st, i0, end);
+            if (k < 0) {
+                skipped++;
+                continue;
+            }
+            OtherStateEvent off = st.get(k), before = st.get(k - 1);
+            // Our next hit could already have reached them.
+            if (n + 1 < mine.size() && mine.get(n + 1).t() + ourPing <= off.t()) continue;
+            int kind = takeOff(off.y() - before.y(), off.tick() - before.tick());
+            if (kind < 0) {
+                skipped++;
+                continue;
+            }
+            (kind == 1 ? jumps : lifts).add(new TakeOff(a, ref, off.t() - ref, ourPing, a.targetPingMs()));
+        }
+        List<Case> cases = new ArrayList<>();
+        List<Double> values = new ArrayList<>();
+        int onTick = 0;
+        for (TakeOff j : jumps) {
+            double usual = usualLift(lifts, j.ref());
+            double off = Double.isNaN(usual) ? Double.NaN : j.delay() - usual;
+            if (onKbTick(off)) onTick++;
+            if (!Double.isNaN(off)) values.add(off);
+            cases.add(new Case(j.hit().t(), off, j.hit().reach(), j.ourPing(), j.oppPing(), -1, 0));
+        }
+        int checked = jumps.size() + lifts.size();
+        boolean flagged = checked >= p.jrMin() && onTick * 100 >= p.jrPct() * checked;
+        Missing m = checked == 0 && likeJump > 0 ? Missing.KB_LIKE_JUMP : checked == 0 && skipped > 0 ? Missing.NO_DATA
+                : checked < p.jrMin() ? Missing.TOO_FEW : Missing.NONE;
+        return new Result(Check.JUMP_RESET, List.copyOf(cases), checked, skipped, flagged, onTick, m, arr(values));
+    }
+
+    /** G: a reset no earlier than half a tick before their usual lift was on the knockback tick; unknown counts too. */
+    public static boolean onKbTick(double offMs) {
+        return !(offMs < -Cooldown.TICK_MS / 2.0);
+    }
+
+    /** Median delay of the up to 5 lifts nearest in time: their ping drifts during a recording. */
+    static double usualLift(List<TakeOff> lifts, long t) {
+        if (lifts.isEmpty()) return Double.NaN;
+        List<TakeOff> near = new ArrayList<>(lifts);
+        near.sort(Comparator.comparingLong(l -> Math.abs(l.ref() - t)));
+        double[] d = new double[Math.min(5, near.size())];
+        for (int i = 0; i < d.length; i++) d[i] = near.get(i).delay();
+        return median(d);
+    }
+
+    /** First sample after the on-ground sample i0, up to time end, that is in the air; -1 if none. */
+    static int firstAirborne(List<OtherStateEvent> st, int i0, long end) {
+        for (int k = i0 + 1; k < st.size() && st.get(k).t() <= end; k++) if (!st.get(k).onGround()) return k;
+        return -1;
+    }
+
+    private static long firstIn(List<Long> times, long from, long to) {
+        for (long x : times) if (x >= from && x <= to) return x;
+        return -1;
     }
 
     /** 20 / attack speed (Player.getCurrentItemAttackStrengthDelay) for vanilla items; NaN if unknown. */

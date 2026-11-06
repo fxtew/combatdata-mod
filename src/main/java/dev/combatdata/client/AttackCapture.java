@@ -71,6 +71,7 @@ public final class AttackCapture {
         Entity cause = source.getEntity();
         // Only our damage confirms a hit; fire, fall and other damage without an attacker (cause == null) does not.
         if (cause != mc.player) return;
+        PositionCapture.onHurt(victim);
         for (Iterator<Pending> it = PENDING.iterator(); it.hasNext(); ) {
             Pending pd = it.next();
             if (pd.entityId() == victim.getId()) {
