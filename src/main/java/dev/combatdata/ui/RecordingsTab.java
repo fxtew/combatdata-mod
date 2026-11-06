@@ -2,11 +2,13 @@ package dev.combatdata.ui;
 
 import dev.combatdata.CombatDataClient;
 import dev.combatdata.client.Recorder;
+import dev.combatdata.client.CodeShare;
 import dev.combatdata.client.Recordings;
 import dev.combatdata.core.Cdrec;
 import dev.combatdata.core.Lang;
 import dev.combatdata.core.Recording;
 import dev.combatdata.core.RecordingQuery;
+import dev.combatdata.core.ShareCode;
 import net.minecraft.util.Util;
 import static dev.combatdata.core.Lang.t;
 
@@ -114,7 +116,11 @@ final class RecordingsTab implements Tab {
     private void setStatus(String s, int color) {
         status = s;
         statusColor = color;
+        statusAction = null;
     }
+
+    /** A click on the status line runs this (the clipboard offer). */
+    private Runnable statusAction;
 
     @Override
     public void render(Ui ui, int x, int y, int w, int h) {
@@ -147,6 +153,12 @@ final class RecordingsTab implements Tab {
             rebuild();
         });
         if (ui.hover(bx, y, bw, 16)) ui.tip(t("Все → мои → чужие (присланные другими)", "All → mine → shared (sent by others)"));
+        String pasteL = narrow ? t("Код", "Code") : t("Вставить код", "Paste code");
+        bw = ui.buttonWidth(pasteL);
+        bx -= bw + 4;
+        ui.button(bx, y, bw, 16, pasteL, Ui.Kind.GHOST, true, this::pasteCode);
+        if (ui.hover(bx, y, bw, 16)) ui.tip(t("Открыть код боя из буфера обмена (скопируйте его из чата). Многочастный код можно вставлять по частям.",
+                "Open a fight code from the clipboard (copy it from chat). A multi-part code can be pasted part by part."));
         String sortL = (narrow ? sortShort() : sortNames())[sort.ordinal()] + " ▾";
         bw = ui.buttonWidth(sortL);
         bx -= bw + 4;
@@ -261,8 +273,89 @@ final class RecordingsTab implements Tab {
             leftColor = Theme.MUTED;
         }
         ui.text(Draw.ellipsize(ui.font, left, bx - x - 8), x, Ui.textY(fy, 16), leftColor);
+        if (statusAction != null && hint == null && status != null) {
+            Runnable act = statusAction;
+            ui.click(x, fy, Math.min(ui.font.width(left), bx - x - 8), 16, act);
+        }
 
         if (sortOpen) sortMenu(ui, sortX, y + 18, sortW);
+    }
+
+    void pasteCode() {
+        CodeShare.Pasted p = CodeShare.paste();
+        if (p.error() != null) {
+            setStatus(p.error(), Theme.RED);
+            return;
+        }
+        if (p.decoded() == null) {
+            setStatus(t("Получено частей кода: ", "Code parts received: ") + p.have() + t(" из ", " of ") + p.total()
+                    + t(". Скопируйте следующую и снова «Вставить код»", ". Copy the next one and press Paste code again"), Theme.AMBER);
+            return;
+        }
+        setStatus(null, Theme.MUTED);
+        openCode(p.decoded());
+    }
+
+    /** When the menu opens with a code in the clipboard: one clickable line, no polling. */
+    void offerCode(ShareCode.Decoded d) {
+        setStatus(t("В буфере код: ", "Code in the clipboard: ") + CodeShare.levelName(d.level()) + t(" от ", " from ") + CodeShare.sender(d)
+                + t(". Открыть?", ". Open?"), Theme.ACCENT);
+        statusAction = () -> openCode(d);
+    }
+
+    private void openCode(ShareCode.Decoded d) {
+        if (d.summary() != null) {
+            menu.openModal(new Modal(t("Сводка от ", "Summary from ") + CodeShare.sender(d), summaryLines(d.summary()), null,
+                    List.of(new Modal.Btn(t("Закрыть", "Close"), Ui.Kind.PRIMARY, s -> menu.closeModal()))));
+            return;
+        }
+        Recording r = d.rec();
+        int hits = 0, taken = 0;
+        for (dev.combatdata.core.Event e : r.events()) {
+            if (e instanceof dev.combatdata.core.AttackEvent a && a.outcome() == dev.combatdata.core.Outcome.HIT_CONFIRMED) hits++;
+            else if (e instanceof dev.combatdata.core.IncomingHitEvent) taken++;
+        }
+        List<String> lines = List.of(Fmt.clock(r.durationMs()) + t(" · попаданий ", " · hits ") + hits + t(" · получено ", " · taken ") + taken,
+                d.level() == ShareCode.Level.REPLAY ? t("С повтором боя.", "With the fight replay.")
+                        : t("Без позиций: повтора и дистанции в коде нет.", "No positions: no replay or distance in the code."));
+        menu.openModal(new Modal(t("Код: ", "Code: ") + CodeShare.levelName(d.level()) + t(" от ", " from ") + CodeShare.sender(d), lines, null, List.of(
+                new Modal.Btn(t("Отмена", "Cancel"), Ui.Kind.SECONDARY, s -> menu.closeModal()),
+                new Modal.Btn(t("Сохранить в чужие", "Save to shared"), Ui.Kind.SECONDARY, s -> {
+                    menu.closeModal();
+                    try {
+                        Path saved = CodeShare.save(d);
+                        setStatus(t("Сохранено в чужие: ", "Saved to shared: ") + saved.getFileName(), Theme.GREEN);
+                        refresh();
+                    } catch (IOException ex) {
+                        setStatus(t("Не удалось сохранить: ", "Could not save: ") + ex.getMessage(), Theme.RED);
+                    }
+                }),
+                new Modal.Btn(t("Открыть", "Open"), Ui.Kind.PRIMARY, s -> {
+                    menu.closeModal();
+                    menu.openRecording(CodeShare.entry(d), r, true);
+                }))));
+    }
+
+    private static List<String> summaryLines(ShareCode.Summary s) {
+        java.util.function.ToLongFunction<ShareCode.SumField> v = s::get;
+        long att = v.applyAsLong(ShareCode.SumField.ATTACKS), hits = v.applyAsLong(ShareCode.SumField.HITS);
+        List<String> l = new java.util.ArrayList<>();
+        l.add(Fmt.clock(v.applyAsLong(ShareCode.SumField.DURATION_S) * 1000) + (s.opponent() == null ? "" : t(" · против ", " · vs ") + s.opponent())
+                + (s.server() == null ? "" : " · " + s.server()));
+        l.add(t("Попадания ", "Hits ") + hits + "/" + att + (att == 0 ? "" : " (" + Math.round(100.0 * hits / att) + "%)")
+                + t(" · дистанция ", " · distance ") + Fmt.num(v.applyAsLong(ShareCode.SumField.REACH_CM) / 100.0, 2)
+                + t(" · прицел ↔ ", " · aim ↔ ") + Fmt.num(v.applyAsLong(ShareCode.SumField.AIM_YAW_DECI) / 10.0, 1) + "°");
+        l.add(t("Заряд ", "Charge ") + v.applyAsLong(ShareCode.SumField.CHARGE_PCT) + t("% · спринт ", "% · sprint ") + v.applyAsLong(ShareCode.SumField.SPRINT_HITS)
+                + t(" · криты ", " · crits ") + v.applyAsLong(ShareCode.SumField.CRITS) + " · 3BH " + v.applyAsLong(ShareCode.SumField.TB_HITS)
+                + "/" + v.applyAsLong(ShareCode.SumField.TB_RATED));
+        l.add("JR " + v.applyAsLong(ShareCode.SumField.JR_SUCCESS) + "/" + v.applyAsLong(ShareCode.SumField.JR_ATTEMPTS)
+                + t(" · среднее ", " · mean ") + v.applyAsLong(ShareCode.SumField.JR_MEAN_MS) + t(" мс · σ ", " ms · σ ")
+                + v.applyAsLong(ShareCode.SumField.JR_SIGMA_MS) + t(" мс", " ms"));
+        l.add(t("Комбо ср. ", "Combo avg ") + Fmt.num(v.applyAsLong(ShareCode.SumField.COMBO_X100) / 100.0, 1) + t(", макс. ", ", max ")
+                + v.applyAsLong(ShareCode.SumField.MAX_COMBO) + t(" · размены ", " · trades ") + v.applyAsLong(ShareCode.SumField.TRADES)
+                + t(": первый ", ": first ") + v.applyAsLong(ShareCode.SumField.FIRST_HITS) + t(", выиграно ", ", won ") + v.applyAsLong(ShareCode.SumField.TRADES_WON));
+        l.add(t("Получено ударов ", "Hits taken ") + v.applyAsLong(ShareCode.SumField.TAKEN) + t(" · пинг ", " · ping ") + v.applyAsLong(ShareCode.SumField.PING_MS) + t(" мс", " ms"));
+        return l;
     }
 
     private void share(List<Recordings.Entry> list) {

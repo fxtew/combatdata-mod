@@ -23,6 +23,10 @@ final class ViewTab implements Tab {
     }
 
     void set(Recordings.Entry e, Recording r) {
+        set(e, r, false);
+    }
+
+    void set(Recordings.Entry e, Recording r, boolean fromCode) {
         live = false;
         entry = e;
         rec = r;
@@ -30,7 +34,7 @@ final class ViewTab implements Tab {
         stats.setNote(dev.combatdata.core.Share.newer(mod, Recorder.modVersion())
                 ? t("Запись из более новой версии мода (", "Recorded with a newer mod version (") + mod + t("): часть данных не показана", "): some data is not shown")
                 : null);
-        stats.setForeign(e != null && e.shared() ? e.sharedBy() : null);
+        stats.setForeign(e != null && e.shared() ? e.sharedBy() : null, fromCode);
         stats.set(r, false);
     }
 
@@ -39,7 +43,7 @@ final class ViewTab implements Tab {
         entry = null;
         rec = null;
         combat = Recorder.hasCombatEvents();
-        stats.setForeign(null);
+        stats.setForeign(null, false);
         stats.set(Recorder.liveCopy(), false);
         lastRefresh = System.currentTimeMillis();
     }
