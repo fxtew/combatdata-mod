@@ -60,21 +60,32 @@ final class ShareDialog implements Modal.Body {
         Modal m = new Modal(t("Поделиться", "Share"), List.of(what), null, entries.size() == 1 ? List.of(
                 new Modal.Btn(t("Отмена", "Cancel"), Ui.Kind.SECONDARY, s -> menu.closeModal()),
                 new Modal.Btn(t("Сохранить файл", "Save file"), Ui.Kind.SECONDARY, s -> d.saveFile(menu)),
+                new Modal.Btn(t("Скопировать файл", "Copy file"), Ui.Kind.SECONDARY, s -> d.copyFile(menu)),
                 new Modal.Btn(t("Скопировать код", "Copy code"), Ui.Kind.PRIMARY, s -> d.copy(menu, 0, true)))
                 : List.of(new Modal.Btn(t("Отмена", "Cancel"), Ui.Kind.SECONDARY, s -> menu.closeModal()),
-                new Modal.Btn(t("Сохранить файл", "Save file"), Ui.Kind.PRIMARY, s -> d.saveFile(menu))));
+                new Modal.Btn(t("Сохранить файл", "Save file"), Ui.Kind.SECONDARY, s -> d.saveFile(menu)),
+                new Modal.Btn(t("Скопировать файл", "Copy file"), Ui.Kind.PRIMARY, s -> d.copyFile(menu))));
         m.body = d;
-        m.width = 320;
+        m.width = entries.size() == 1 ? 420 : 320;
         menu.openModal(m);
     }
 
     private void saveFile(MenuScreen menu) {
         menu.closeModal();
         status.accept(t("Сохраняю…", "Saving…"), Theme.MUTED);
+        Exchange.export(request(), msg -> status.accept(msg, Theme.GREEN), msg -> status.accept(msg, Theme.RED));
+    }
+
+    /** The file goes on the clipboard: one paste into a chat, however long the recording. */
+    private void copyFile(MenuScreen menu) {
+        menu.closeModal();
+        status.accept(t("Копирую файл…", "Copying the file…"), Theme.MUTED);
+        Exchange.copyFile(request(), msg -> status.accept(msg, Theme.GREEN), msg -> status.accept(msg, Theme.RED));
+    }
+
+    private Exchange.Request request() {
         boolean cut = oneFight && fights != null && !fights.isEmpty();
-        Exchange.export(new Exchange.Request(entries, cut ? fight : -1,
-                        new Share.Options(cut, 0, 0, anonOpponents, anonServer, hidePlayer, behavior)),
-                msg -> status.accept(msg, Theme.GREEN), msg -> status.accept(msg, Theme.RED));
+        return new Exchange.Request(entries, cut ? fight : -1, new Share.Options(cut, 0, 0, anonOpponents, anonServer, hidePlayer, behavior));
     }
 
     private String codeKey() {
@@ -167,7 +178,9 @@ final class ShareDialog implements Modal.Body {
                         + t(": можно поделиться одним боем", ": consider sharing one fight"), w), x, y, Theme.AMBER);
                 y += 11;
             }
-            ShareCode.Encoded e = current();
+            ShareCode.Encoded fresh = current();
+            // While a new code is made the last one stays on screen, dimmed, so the rows below do not jump.
+            ShareCode.Encoded e = fresh != null ? fresh : code.latest();
             String info;
             int color = Theme.MUTED;
             if (rec == null) info = loadError != null ? loadError : t("готовлю код…", "making the code…");
@@ -176,7 +189,9 @@ final class ShareDialog implements Modal.Body {
                 int n = e.parts().size();
                 info = "≈" + e.chars() + t(" символов · ", " characters · ") + n + " " + (dev.combatdata.core.Lang.english()
                         ? (n == 1 ? "message" : "messages") : dev.combatdata.core.Lang.plural(n, "сообщение", "сообщения", "сообщений"));
+                if (n > 1) info += t(" · одним вложением: «Скопировать файл»", " · as one attachment: \"Copy file\"");
                 color = Theme.TEXT;
+                if (fresh == null) color = Theme.MUTED;
             }
             ui.text(Draw.ellipsize(ui.font, info, w), x, y, color);
             y += 12;
