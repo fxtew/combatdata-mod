@@ -91,6 +91,19 @@ final class Fmt {
         return sb.toString();
     }
 
+    /** Where the author's name sits in a line ending with meta(e): {from, to}, or null if they are not an opponent. */
+    static int[] authorSpan(Recordings.Entry e, String line) {
+        var h = e.header();
+        if (h == null || h.opponents().isEmpty()) return null;
+        int start = line.length() - String.join(", ", h.opponents()).length();
+        for (int i = 0; i < h.opponents().size(); i++) {
+            String name = h.opponents().get(i);
+            if (dev.combatdata.core.Author.is(h.opponentId(i))) return new int[]{start, start + name.length()};
+            start += name.length() + 2;
+        }
+        return null;
+    }
+
     static String size(long bytes) {
         if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024.0)) + t(" КБ", " KB");
         return String.format(Locale.ROOT, t("%.1f МБ", "%.1f MB"), bytes / 1048576.0);

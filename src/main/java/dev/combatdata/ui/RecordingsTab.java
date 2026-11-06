@@ -107,6 +107,22 @@ final class RecordingsTab implements Tab {
         shown = RecordingQuery.apply(items, query, sort, favoritesOnly).stream().map(RecordingQuery.Item::index).toList();
     }
 
+    /** The description line, cut to maxW; the author's name in it (span, may be null) is drawn in gold. */
+    private static void metaLine(Ui ui, String meta, int[] span, int x, int y, int maxW, int color) {
+        String shown = Draw.ellipsize(ui.font, meta, maxW);
+        int kept = shown.equals(meta) ? shown.length() : shown.length() - 3;
+        if (span == null || span[0] >= kept) {
+            ui.text(shown, x, y, color);
+            return;
+        }
+        int to = Math.min(span[1], kept);
+        String a = shown.substring(0, span[0]), b = shown.substring(span[0], to), c = shown.substring(to);
+        ui.text(a, x, y, color);
+        x += ui.font.width(a);
+        ui.text(b, x, y, Theme.author());
+        ui.text(c, x + ui.font.width(b), y, color);
+    }
+
     private Recordings.Entry selectedEntry() {
         if (entries == null || selected == null) return null;
         for (Recordings.Entry e : entries) if (e.file().equals(selected)) return e;
@@ -216,7 +232,7 @@ final class RecordingsTab implements Tab {
             String lite = e.header() != null && e.header().notRecorded() != 0 ? t("лёгкая", "lite") : null;
             int liteW = lite == null ? 0 : ui.font.width(lite) + 8;
             String meta = e.shared() ? t("от ", "from ") + e.sharedBy() + " · " + Fmt.meta(e) : Fmt.meta(e);
-            ui.text(Draw.ellipsize(ui.font, meta, listW - 40 - sizeW - liteW), listX + 20, ry + 14, e.shared() ? Theme.ACCENT : Theme.MUTED);
+            metaLine(ui, meta, Fmt.authorSpan(e, meta), listX + 20, ry + 14, listW - 40 - sizeW - liteW, e.shared() ? Theme.ACCENT : Theme.MUTED);
             if (lite != null) ui.textRight(lite, listX + listW - 12 - sizeW - 8, ry + 14, Theme.ACCENT);
             ui.textRight(size, listX + listW - 12, ry + 14, Theme.DIM);
             Path file = e.file();
