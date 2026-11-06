@@ -49,6 +49,8 @@ public final class Settings {
     /** Opponent behaviour checks after a fight; thresholds as in Behavior.Params. */
     public boolean behavior = true;
     public int bhCritMin = 3, bhCritFlatMm = 10, bhKsMin = 5, bhKsSharePct = 80, bhKsRatioPct = 95;
+    public int bhVelMin = 5, bhVelSharePct = 70, bhVelPct = 30, bhReachMin = 3, bhReachSharePct = 20, bhReachExtraCm = 30,
+            bhHbMin = 3, bhHbExtraDeg = 10;
     public boolean recordPositions = true;
     public boolean recordInput = true, recordKnockback = true, recordTaken = true;
     public static final int REC_FULL = 0, REC_LITE = 1, REC_CUSTOM = 2;
@@ -100,7 +102,8 @@ public final class Settings {
     }
 
     public Behavior.Params behaviorParams() {
-        return new Behavior.Params(bhCritMin, bhCritFlatMm / 1000.0, Behavior.Params.DEFAULT.critLookMs(), bhKsMin, bhKsSharePct, bhKsRatioPct);
+        return new Behavior.Params(bhCritMin, bhCritFlatMm / 1000.0, Behavior.Params.DEFAULT.critLookMs(), bhKsMin, bhKsSharePct, bhKsRatioPct,
+                bhVelMin, bhVelSharePct, bhVelPct, bhReachMin, bhReachSharePct, bhReachExtraCm / 100.0, bhHbMin, bhHbExtraDeg);
     }
 
     public long capacityMs() {
@@ -132,6 +135,14 @@ public final class Settings {
         bhKsMin = Math.max(1, Math.min(50, bhKsMin));
         bhKsSharePct = Math.max(10, Math.min(100, bhKsSharePct));
         bhKsRatioPct = Math.max(50, Math.min(150, bhKsRatioPct));
+        bhVelMin = Math.max(1, Math.min(50, bhVelMin));
+        bhVelSharePct = Math.max(10, Math.min(100, bhVelSharePct));
+        bhVelPct = Math.max(5, Math.min(90, bhVelPct));
+        bhReachMin = Math.max(1, Math.min(20, bhReachMin));
+        bhReachSharePct = Math.max(5, Math.min(100, bhReachSharePct));
+        bhReachExtraCm = Math.max(0, Math.min(200, bhReachExtraCm));
+        bhHbMin = Math.max(1, Math.min(20, bhHbMin));
+        bhHbExtraDeg = Math.max(0, Math.min(60, bhHbExtraDeg));
         fsLayout = fsLayout >= FightSummary.LAYOUT_TWO_LINES && fsLayout <= FightSummary.LAYOUT_COLUMN ? fsLayout : FightSummary.LAYOUT_TWO_LINES;
         fsBgOpacity = Math.max(0, Math.min(100, fsBgOpacity));
         fsDelaySec = Math.max(3, Math.min(30, fsDelaySec));
@@ -214,6 +225,14 @@ public final class Settings {
         bhKsMin = c.bhKsMin;
         bhKsSharePct = c.bhKsSharePct;
         bhKsRatioPct = c.bhKsRatioPct;
+        bhVelMin = c.bhVelMin;
+        bhVelSharePct = c.bhVelSharePct;
+        bhVelPct = c.bhVelPct;
+        bhReachMin = c.bhReachMin;
+        bhReachSharePct = c.bhReachSharePct;
+        bhReachExtraCm = c.bhReachExtraCm;
+        bhHbMin = c.bhHbMin;
+        bhHbExtraDeg = c.bhHbExtraDeg;
         recordPositions = c.recordPositions;
         recordInput = c.recordInput;
         recordKnockback = c.recordKnockback;
@@ -342,6 +361,14 @@ public final class Settings {
         m.put("bhKsMin", bhKsMin);
         m.put("bhKsSharePct", bhKsSharePct);
         m.put("bhKsRatioPct", bhKsRatioPct);
+        m.put("bhVelMin", bhVelMin);
+        m.put("bhVelSharePct", bhVelSharePct);
+        m.put("bhVelPct", bhVelPct);
+        m.put("bhReachMin", bhReachMin);
+        m.put("bhReachSharePct", bhReachSharePct);
+        m.put("bhReachExtraCm", bhReachExtraCm);
+        m.put("bhHbMin", bhHbMin);
+        m.put("bhHbExtraDeg", bhHbExtraDeg);
         m.put("recordPositions", recordPositions);
         m.put("recordInput", recordInput);
         m.put("recordKnockback", recordKnockback);
@@ -418,6 +445,14 @@ public final class Settings {
         if (m.get("bhKsMin") instanceof Number n) s.bhKsMin = n.intValue();
         if (m.get("bhKsSharePct") instanceof Number n) s.bhKsSharePct = n.intValue();
         if (m.get("bhKsRatioPct") instanceof Number n) s.bhKsRatioPct = n.intValue();
+        if (m.get("bhVelMin") instanceof Number n) s.bhVelMin = n.intValue();
+        if (m.get("bhVelSharePct") instanceof Number n) s.bhVelSharePct = n.intValue();
+        if (m.get("bhVelPct") instanceof Number n) s.bhVelPct = n.intValue();
+        if (m.get("bhReachMin") instanceof Number n) s.bhReachMin = n.intValue();
+        if (m.get("bhReachSharePct") instanceof Number n) s.bhReachSharePct = n.intValue();
+        if (m.get("bhReachExtraCm") instanceof Number n) s.bhReachExtraCm = n.intValue();
+        if (m.get("bhHbMin") instanceof Number n) s.bhHbMin = n.intValue();
+        if (m.get("bhHbExtraDeg") instanceof Number n) s.bhHbExtraDeg = n.intValue();
         if (m.get("recordPositions") instanceof Boolean b) s.recordPositions = b;
         if (m.get("recordInput") instanceof Boolean b) s.recordInput = b;
         if (m.get("recordKnockback") instanceof Boolean b) s.recordKnockback = b;
