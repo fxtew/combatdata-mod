@@ -103,6 +103,8 @@ public final class MenuScreen extends Screen {
         current().onShow();
         if (editBox != null) addWidget(editBox);
         dev.combatdata.client.Exchange.checkInbox(this::imported);
+        dev.combatdata.core.ShareCode.Decoded offer = dev.combatdata.client.CodeShare.offer();
+        if (offer != null) recordings.offerCode(offer);
     }
 
     /** Files dragged into the game window while the menu is open (Screen.onFilesDrop, like the resource pack screen). */
@@ -133,7 +135,12 @@ public final class MenuScreen extends Screen {
     }
 
     void openRecording(Recordings.Entry entry, Recording rec) {
-        view.set(entry, rec);
+        openRecording(entry, rec, false);
+    }
+
+    /** fromCode: pasted from a chat code, so missing parts say "not in the code". */
+    void openRecording(Recordings.Entry entry, Recording rec, boolean fromCode) {
+        view.set(entry, rec, fromCode);
         switchTab(TabId.VIEW);
     }
 

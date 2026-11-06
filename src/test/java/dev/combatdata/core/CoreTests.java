@@ -35,6 +35,7 @@ public final class CoreTests {
         progress();
         compare();
         share();
+        shareCode();
         trades();
         wtap();
         taken();
@@ -1805,6 +1806,176 @@ public final class CoreTests {
                 && sv[0].sources().equals(List.of(mid)));
         Compare.Side[] nm = Compare.norm(all, mid, 10, "norm");
         check("сравнение: запись против нормы из прошлых", nm[0].sources().size() == 2 && nm[1].sources().equals(List.of(mid)));
+    }
+
+    /** A synthetic fight of `sec` seconds from `t0` with noisy, realistic fields (so packing is not flattered). */
+    static List<Event> synthFight(Random rnd, long t0, int sec, boolean positions) {
+        List<Event> l = new ArrayList<>();
+        for (int k = 0; k < sec; k++) l.add(new PingEvent(t0 + k * 1000L, 40 + rnd.nextInt(8)));
+        // Density of an average real fight: about 29 attacks and 22 hits taken per 30 s.
+        for (long t = t0; t < t0 + sec * 1000L; t += 900 + rnd.nextInt(260)) {
+            Outcome o = rnd.nextInt(10) < 7 ? Outcome.HIT_CONFIRMED : Outcome.MISS;
+            HitType ty = rnd.nextInt(3) == 0 ? HitType.CRIT : rnd.nextInt(2) == 0 ? HitType.SPRINT : HitType.NORMAL;
+            AttackFlags f = new AttackFlags(ty == HitType.SPRINT, ty != HitType.CRIT, ty == HitType.CRIT ? rnd.nextDouble() : 0,
+                    false, false, false, false, true, false);
+            l.add(new AttackEvent(t, (int) (t / 50), A, "Alpha", o, ty, f, 0.9f + rnd.nextFloat() * 0.1f, 2 + rnd.nextDouble(),
+                    rnd.nextDouble() * 8, rnd.nextGaussian() * 3, rnd.nextGaussian() * 2, rnd.nextDouble() * 2 - 1, rnd.nextDouble(),
+                    40 + rnd.nextInt(3), t - 30, 2.2 + rnd.nextDouble(), 3.0, rnd.nextDouble() * 6, rnd.nextDouble() * 4 - 1,
+                    60 + rnd.nextInt(5), 12.5f, "minecraft:diamond_sword", Weapon.SWORD, Relation.TEAM_NONE,
+                    rnd.nextGaussian() * 3, rnd.nextGaussian(), rnd.nextGaussian() * 200));
+            if (rnd.nextInt(3) > 0) l.add(new InputEvent(t + 40 + rnd.nextInt(30), 0, InputEvent.Input.FORWARD, false));
+            if (rnd.nextInt(3) > 0) l.add(new InputEvent(t + 120 + rnd.nextInt(60), 0, InputEvent.Input.FORWARD, true));
+            l.add(new InputEvent(t + 130 + rnd.nextInt(40), 0, InputEvent.Input.SPRINTING, true));
+        }
+        for (long t = t0 + 300; t < t0 + sec * 1000L; t += 1200 + rnd.nextInt(300)) {
+            l.add(new IncomingHitEvent(t, (int) (t / 50), A, "Alpha", rnd.nextBoolean(), false, true, 40 + rnd.nextInt(3),
+                    0.5 + rnd.nextDouble(), IncomingHitEvent.Kind.MELEE, null, Weapon.SWORD, "minecraft:diamond_sword",
+                    Relation.TEAM_NONE, 2 + rnd.nextDouble(), 3.0, rnd.nextDouble() * 6, rnd.nextDouble() * 3, 60 + rnd.nextInt(5),
+                    rnd.nextInt(3) == 0 ? 1 : 0));
+            long j = t + rnd.nextInt(120) - 20;
+            l.add(new JumpEvent(j, (int) (j / 50), true, j - 5, JumpEvent.keys(true, false, false, false, true)));
+        }
+        if (positions) {
+            double x = 0, z = 0, ox = 2, oz = 0;
+            for (long t = t0; t < t0 + sec * 1000L; t += 50) {
+                x += rnd.nextGaussian() * 0.2;
+                z += rnd.nextGaussian() * 0.2;
+                ox += rnd.nextGaussian() * 0.2;
+                oz += rnd.nextGaussian() * 0.2;
+                l.add(new PositionEvent(t, (int) (t / 50), x, 64 + Math.abs(rnd.nextGaussian() * 0.3), z, (float) (rnd.nextDouble() * 360),
+                        List.of(new PositionEvent.Other(A, ox, 64, oz, (float) (rnd.nextDouble() * 360)))));
+            }
+        }
+        l.sort(Comparator.comparingLong(Event::t));
+        return l;
+    }
+
+    static Stats.Result statsOf(Recording r) {
+        return Stats.compute(r, JumpResetEvaluator.Params.DEFAULT, Stats.Filter.ALL, 3.0);
+    }
+
+    static void shareCode() throws Exception {
+        Random rnd = new Random(5);
+        boolean b32ok = true;
+        for (int n = 0; n < 200; n++) {
+            byte[] d = new byte[n % 61];
+            rnd.nextBytes(d);
+            String s = Base32768.encode(d);
+            for (int i = 0; i < s.length(); i++) if (Character.isSurrogate(s.charAt(i)) || s.charAt(i) < 0x3400) b32ok = false;
+            if (!Arrays.equals(d, Base32768.decode(s))) b32ok = false;
+        }
+        boolean badChar = false;
+        try {
+            Base32768.decode("abc");
+        } catch (IllegalArgumentException e) {
+            badChar = true;
+        }
+        check("код: Base32768 туда и обратно, только символы BMP", b32ok && badChar && Base32768.encode(new byte[15]).length() == 8);
+
+        List<Event> ev = new ArrayList<>();
+        ev.add(new SegmentEvent(0, "play.example.net", "minecraft:overworld", 1_700_000_000_000L));
+        ev.addAll(synthFight(rnd, 1000, 30, true));
+        UUID me = UUID.fromString("00000000-0000-0000-0000-00000000000c");
+        Recording fight = new Recording(1, "Me", me, "26.1.2", 1_700_000_000_000L, 32_000, ev);
+        ShareCode.Encoded b = ShareCode.encode(fight, ShareCode.Level.FIGHT, "Me", false, false);
+        ShareCode.Encoded p = ShareCode.encode(fight, ShareCode.Level.REPLAY, "Me", false, false);
+        System.out.println("  код боя 30 с: " + b.chars() + " символов (" + b.bytes() + " байт), с повтором " + p.chars());
+        check("код: бой 30 с не длиннее 500 символов, с повтором не длиннее 1800", b.parts().size() == 1 && b.chars() <= 500
+                && p.parts().size() == 1 && p.chars() <= 1800 && b.parts().get(0).startsWith("CD1B:"));
+        ShareCode.Decoded d = ShareCode.decode(ShareCode.find(b.parts().get(0)));
+        Stats.Result s0 = statsOf(fight), s1 = statsOf(d.rec());
+        check("код: статистика боя совпадает с учётом точности", d.level() == ShareCode.Level.FIGHT && "Me".equals(d.by())
+                && s1.hits().confirmed() == s0.hits().confirmed() && s1.hits().misses() == s0.hits().misses()
+                && near(s1.hits().reachMean(), s0.hits().reachMean(), 0.01) && near(s1.hits().aimYawAbsMean(), s0.hits().aimYawAbsMean(), 0.3)
+                && near(s1.hits().strengthMean(), s0.hits().strengthMean(), 1 / 32.0) && s1.hits().types().equals(s0.hits().types())
+                && s1.jump().attempts() == s0.jump().attempts() && s1.jump().success() == s0.jump().success()
+                && s1.combo().maxCombo() == s0.combo().maxCombo() && s1.trades().total() == s0.trades().total()
+                && near(s1.pingMean(), s0.pingMean(), 1) && d.rec().skipped(Features.POSITIONS)
+                && d.rec().events().stream().noneMatch(e -> e instanceof PositionEvent));
+        ShareCode.Decoded dp = ShareCode.decode(ShareCode.find(p.parts().get(0)));
+        long posN = dp.rec().events().stream().filter(e -> e instanceof PositionEvent).count();
+        PositionEvent src = (PositionEvent) fight.events().stream().filter(e -> e instanceof PositionEvent).findFirst().orElseThrow();
+        PositionEvent got = (PositionEvent) dp.rec().events().stream().filter(e -> e instanceof PositionEvent).findFirst().orElseThrow();
+        check("код: повтор — позиции 5 раз в секунду с точностью 1/16 блока", posN >= 145 && posN <= 151 && !dp.rec().skipped(Features.POSITIONS)
+                && near(got.x(), src.x(), 1 / 32.0 + 1e-9) && near(got.others().get(0).x(), src.others().get(0).x(), 1 / 16.0 + 1e-9));
+        // A 10 minute recording: twenty fights.
+        List<Event> long10 = new ArrayList<>();
+        long10.add(new SegmentEvent(0, "play.example.net", "minecraft:overworld", 1_700_000_000_000L));
+        for (int i = 0; i < 20; i++) long10.addAll(synthFight(rnd, i * 30_000L, 20, false));
+        Recording rec10 = new Recording(1, "Me", me, "26.1.2", 1_700_000_000_000L, 600_000, long10);
+        ShareCode.Encoded r10 = ShareCode.encode(rec10, ShareCode.Level.RECORDING, "Me", false, false);
+        System.out.println("  код записи 10 мин: " + r10.chars() + " символов, частей " + r10.parts().size());
+        boolean partsOk = r10.parts().stream().allMatch(x -> x.length() <= ShareCode.PART_CHARS) && r10.parts().size() > 1
+                && r10.parts().get(1).startsWith("CD1R2/" + r10.parts().size() + ":");
+        ShareCode.Assembler asm = new ShareCode.Assembler();
+        List<ShareCode.Part> all10 = new ArrayList<>();
+        for (String x : r10.parts()) all10.addAll(ShareCode.find(x));
+        List<ShareCode.Part> shuffled = new ArrayList<>(all10);
+        Collections.reverse(shuffled);
+        List<ShareCode.Part> done = null;
+        int seenHave = 0;
+        for (int i = 0; i < shuffled.size(); i++) {
+            done = asm.add(List.of(shuffled.get(i)));
+            if (i == 0) seenHave = asm.have();
+        }
+        ShareCode.Decoded d10 = ShareCode.decode(done);
+        check("код: запись 10 мин частями по 1900, части в любом порядке", partsOk && seenHave == 1 && done != null
+                && statsOf(d10.rec()).hits().confirmed() == statsOf(rec10).hits().confirmed()
+                && ShareCode.decode(ShareCode.find(String.join("\n", r10.parts()))).rec().events().size() == d10.rec().events().size());
+        // Damage.
+        String code = b.parts().get(0);
+        char[] cs = code.toCharArray();
+        cs[40] = cs[40] == '一' ? '丁' : '一';
+        String[] bad = {new String(cs), code.substring(0, code.length() - 30), "CD2B:" + code.substring(5), "CD1B:abc"};
+        String[] want = {Lang.t("повреждён", "damaged"), Lang.t("повреждён", "damaged"), Lang.t("новой", "newer"), null};
+        boolean damageOk = true;
+        for (int i = 0; i < bad.length; i++) {
+            try {
+                ShareCode.decode(ShareCode.find(bad[i]));
+                damageOk = false;
+            } catch (ShareCode.CodeException e) {
+                if (want[i] != null && !e.getMessage().contains(want[i])) damageOk = false;
+            }
+        }
+        check("код: повреждённый, обрезанный и новый код дают понятную ошибку", damageOk && ShareCode.find("привет").isEmpty());
+        // Compatible code and hidden names.
+        Recording anon = Share.prepare(fight, Share.Options.DEFAULT);
+        ShareCode.Encoded b64 = ShareCode.encode(anon, ShareCode.Level.FIGHT, null, true, true);
+        String bt = b64.parts().get(0);
+        ShareCode.Decoded da = ShareCode.decode(ShareCode.find("смотри: " + bt + " вот"));
+        boolean clean = bt.startsWith("CD1B=") && bt.chars().allMatch(c -> c < 128) && !new String(Base64.getUrlDecoder().decode(bt.substring(5)),
+                java.nio.charset.StandardCharsets.ISO_8859_1).contains("Alpha") && da.anon() && da.by() == null
+                && da.rec().events().stream().noneMatch(e -> e.toString().contains("Alpha") || e.toString().contains(A.toString()))
+                && da.rec().events().stream().anyMatch(e -> e instanceof AttackEvent a && a.targetName().equals(Lang.t("Противник ", "Opponent ") + 1));
+        check("код: совместимый Base64URL и обезличивание", clean && statsOf(da.rec()).hits().confirmed() == s0.hits().confirmed());
+        ShareCode.Summary sum = ShareCode.summarize(fight, Rules.single(JumpResetEvaluator.Params.DEFAULT, 100), "Me", false);
+        ShareCode.Encoded se = ShareCode.encodeSummary(sum, false, false);
+        ShareCode.Decoded sd = ShareCode.decode(ShareCode.find(se.parts().get(0)));
+        System.out.println("  код сводки: " + se.chars() + " символов");
+        // A tiny code that inflates to 8 MB must be refused, not unpacked.
+        java.util.zip.Deflater df = new java.util.zip.Deflater(9, true);
+        df.setInput(new byte[8 << 20]);
+        df.finish();
+        byte[] zb = new byte[64 << 10];
+        int zn = df.deflate(zb);
+        df.end();
+        byte[] bomb = new byte[3 + zn + 4];
+        bomb[0] = 1;
+        bomb[1] = (byte) 'B';
+        bomb[2] = 4;
+        System.arraycopy(zb, 0, bomb, 3, zn);
+        java.util.zip.CRC32 bc = new java.util.zip.CRC32();
+        bc.update(bomb, 0, 3 + zn);
+        for (int i = 0; i < 4; i++) bomb[3 + zn + i] = (byte) (bc.getValue() >>> (24 - 8 * i));
+        boolean refused = false;
+        try {
+            ShareCode.decode(ShareCode.find("CD1B:" + Base32768.encode(bomb)));
+        } catch (ShareCode.CodeException e) {
+            refused = e.getMessage().contains(Lang.t("большой", "large"));
+        }
+        check("код: распаковка ограничена 4 МБ", refused);
+        check("код: сводка до 80 символов", se.chars() <= 80 && sd.summary() != null && Arrays.equals(sd.summary().values(), sum.values())
+                && "Alpha".equals(sd.summary().opponent()) && sd.summary().get(ShareCode.SumField.HITS) == s0.hits().confirmed());
     }
 
     static void share() throws Exception {

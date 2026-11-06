@@ -48,6 +48,8 @@ public final class Settings {
     public boolean tradeByWeight = false;
     /** Opponent behaviour checks after a fight; thresholds as in Behavior.Params. */
     public boolean behavior = true;
+    /** Codes for chat in Base64URL (ASCII only) instead of the shorter Base32768. */
+    public boolean compatCode;
     public int bhCritMin = 3, bhCritFlatMm = 10, bhKsMin = 5, bhKsSharePct = 80, bhKsRatioPct = 95;
     public int bhVelMin = 8, bhVelSharePct = 70, bhVelPct = 30, bhReachMin = 3, bhReachSharePct = 20, bhReachExtraCm = 30,
             bhHbMin = 3, bhHbExtraDeg = 10, bhTimMin = 20, bhTimTopPct = 75, bhJrMin = 15, bhJrPct = 95;
@@ -225,6 +227,7 @@ public final class Settings {
         tradeGapMs = c.tradeGapMs;
         tradeByWeight = c.tradeByWeight;
         behavior = c.behavior;
+        compatCode = c.compatCode;
         bhCritMin = c.bhCritMin;
         bhCritFlatMm = c.bhCritFlatMm;
         bhKsMin = c.bhKsMin;
@@ -365,6 +368,7 @@ public final class Settings {
         m.put("tradeGapMs", tradeGapMs);
         m.put("tradeByWeight", tradeByWeight);
         m.put("behavior", behavior);
+        m.put("compatCode", compatCode);
         m.put("bhCritMin", bhCritMin);
         m.put("bhCritFlatMm", bhCritFlatMm);
         m.put("bhKsMin", bhKsMin);
@@ -453,6 +457,7 @@ public final class Settings {
         if (m.get("tradeGapMs") instanceof Number n) s.tradeGapMs = n.intValue();
         if (m.get("tradeByWeight") instanceof Boolean b) s.tradeByWeight = b;
         if (m.get("behavior") instanceof Boolean b) s.behavior = b;
+        if (m.get("compatCode") instanceof Boolean b) s.compatCode = b;
         if (m.get("bhCritMin") instanceof Number n) s.bhCritMin = n.intValue();
         if (m.get("bhCritFlatMm") instanceof Number n) s.bhCritFlatMm = n.intValue();
         if (m.get("bhKsMin") instanceof Number n) s.bhKsMin = n.intValue();
