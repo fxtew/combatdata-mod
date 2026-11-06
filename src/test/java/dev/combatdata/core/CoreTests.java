@@ -14,6 +14,7 @@ public final class CoreTests {
         recordingSwitch();
         opponentData();
         serverProfiles();
+        behavior();
         bufferTrimAndSnapshot();
         geometry();
         threeBlockHit();
@@ -572,6 +573,121 @@ public final class CoreTests {
         ServerCalibration.apply(one, kr, 88);
         check("мало попыток: калибровка не найдена, но число сохранено", !one.cal.valid() && one.cal.updatedMs() == 88
                 && one.kb.allN() == 4);
+    }
+
+    /** Crit on us: attacker A, sword. */
+    static IncomingHitEvent critFrom(long t, UUID who) {
+        return new IncomingHitEvent(t, 0, who, "Alpha", true, false, true, 40, 0.9, IncomingHitEvent.Kind.MELEE, null,
+                Weapon.SWORD, "minecraft:diamond_sword", Relation.TEAM_NONE, 2.8, 3.0, 0, 0, 60, 1);
+    }
+
+    /** States every tick (50 ms). y(tick) and speed(tick) define the movement along x. */
+    static List<Event> states(UUID who, int fromTick, int toTick, java.util.function.IntToDoubleFunction y,
+                              java.util.function.IntToDoubleFunction speed, boolean sprint) {
+        List<Event> out = new ArrayList<>();
+        double x = 0;
+        for (int k = fromTick; k <= toTick; k++) {
+            x += speed.applyAsDouble(k);
+            double yy = y.applyAsDouble(k);
+            out.add(new OtherStateEvent(k * 50L, k, who, x, yy, 0, 90, 0, Math.abs(yy - 64) < 1e-9, sprint, null));
+        }
+        return out;
+    }
+
+    static void behavior() {
+        Behavior.Params p = Behavior.Params.DEFAULT;
+        // A: ten crits in one fight, one per second (tick 20 * i + 20).
+        java.util.function.IntToDoubleFunction jump = k -> {
+            int phase = Math.floorMod(k - 8, 20);
+            return phase < 12 ? 64 + 0.42 * phase - 0.04 * phase * phase : 64;
+        };
+        List<Event> honest = new ArrayList<>(states(A, 0, 230, jump, k -> 0.1, false));
+        List<Event> cheat = new ArrayList<>(states(A, 0, 230, k -> 64, k -> 0.1, false));
+        for (int i = 1; i <= 10; i++) {
+            honest.add(critFrom(i * 1000L + 10, A));
+            cheat.add(critFrom(i * 1000L + 10, A));
+        }
+        honest.sort(Comparator.comparingLong(Event::t));
+        cheat.sort(Comparator.comparingLong(Event::t));
+        Behavior.Report hr = Behavior.analyze(honest, p).get(A), cr = Behavior.analyze(cheat, p).get(A);
+        Behavior.Result ha = hr.get(Behavior.Check.CRITICALS), ca = cr.get(Behavior.Check.CRITICALS);
+        check("A: честные криты в прыжке не срабатывают", ha.checked() == 10 && ha.cases().isEmpty() && !ha.flagged()
+                && hr.level() == Behavior.Level.NONE);
+        check("A: криты стоя на земле срабатывают", ca.cases().size() == 10 && ca.flagged() && ca.maxPerFight() == 10
+                && cr.level() == Behavior.Level.MANY && ca.cases().get(0).groundStates() > 0);
+        List<Event> two = new ArrayList<>(states(A, 0, 230, k -> 64, k -> 0.1, false));
+        two.add(critFrom(3010, A));
+        two.add(critFrom(5010, A));
+        two.sort(Comparator.comparingLong(Event::t));
+        Behavior.Result ta = Behavior.analyze(two, p).get(A).get(Behavior.Check.CRITICALS);
+        check("A: два случая ниже порога не флаг", ta.cases().size() == 2 && !ta.flagged());
+        // Packet criticals may leave the onGround flag false: still flat height, still a case.
+        List<Event> spoof = new ArrayList<>();
+        for (int k = 0; k <= 230; k++) spoof.add(new OtherStateEvent(k * 50L, k, A, k * 0.1, 64, 0, 90, 0, false, false, null));
+        for (int i = 1; i <= 4; i++) spoof.add(critFrom(i * 1000L + 10, A));
+        spoof.sort(Comparator.comparingLong(Event::t));
+        check("A: флаг земли не нужен", Behavior.analyze(spoof, p).get(A).get(Behavior.Check.CRITICALS).flagged());
+        // Lag: no opponent data in the 2 s before the crits.
+        List<Event> lag = new ArrayList<>(states(A, 0, 10, k -> 64, k -> 0.1, false));
+        for (int i = 3; i <= 8; i++) lag.add(critFrom(i * 1000L, A));
+        lag.sort(Comparator.comparingLong(Event::t));
+        Behavior.Result la = Behavior.analyze(lag, p).get(A).get(Behavior.Check.CRITICALS);
+        check("A: лаг (данные устарели) не срабатывает", la.cases().isEmpty() && la.skipped() == 6 && !la.flagged());
+        Behavior.Result old = Behavior.analyze(List.of(critFrom(1000, A), critFrom(2000, A)), p).get(A).get(Behavior.Check.CRITICALS);
+        check("A: старая запись без данных", old.missing() == Behavior.Missing.NO_DATA && !old.flagged());
+        check("A: магический крит не считается", Behavior.analyze(List.of(new IncomingHitEvent(1000, 0, A, "Alpha", true, false, true, 40)), p)
+                .get(A).get(Behavior.Check.CRITICALS).missing() == Behavior.Missing.TOO_FEW);
+
+        // B: sprinting at 0.28 per tick, eight sprint hits; honest speed drops to 0.78 and 0.88, KeepSprint keeps it.
+        java.util.Set<Integer> hitTicks = new java.util.HashSet<>();
+        for (int i = 1; i <= 8; i++) hitTicks.add(i * 20 + 10);
+        java.util.function.IntToDoubleFunction honestV = k -> hitTicks.contains(k - 1) ? 0.28 * 0.782 : hitTicks.contains(k - 2) ? 0.28 * 0.881 : 0.28;
+        List<Event> hb = new ArrayList<>(states(A, 0, 200, k -> 64, honestV, true));
+        List<Event> cb = new ArrayList<>(states(A, 0, 200, k -> 64, k -> 0.28, true));
+        for (int tk : hitTicks) {
+            for (List<Event> l : List.of(hb, cb)) {
+                l.add(new OtherAnimEvent(tk * 50L - 700, tk, A, OtherAnimEvent.Anim.SWING));
+                l.add(new IncomingHitEvent(tk * 50L + 10, 0, A, "Alpha", true, false, true, 40, 1.2, IncomingHitEvent.Kind.MELEE, null,
+                        Weapon.SWORD, "minecraft:diamond_sword", Relation.TEAM_NONE));
+                l.add(new OtherAnimEvent(tk * 50L + 11, tk, A, OtherAnimEvent.Anim.SWING));
+            }
+        }
+        hb.sort(Comparator.comparingLong(Event::t));
+        cb.sort(Comparator.comparingLong(Event::t));
+        Behavior.Result hk = Behavior.analyze(hb, p).get(A).get(Behavior.Check.KEEP_SPRINT);
+        Behavior.Result ck = Behavior.analyze(cb, p).get(A).get(Behavior.Check.KEEP_SPRINT);
+        check("B: честное замедление не срабатывает", hk.checked() == 8 && hk.cases().isEmpty() && !hk.flagged());
+        check("B: без замедления срабатывает", ck.checked() == 8 && ck.cases().size() == 8 && ck.flagged()
+                && near(ck.cases().get(0).value(), 1.0, 1e-6));
+        check("B: один признак: есть странности", Behavior.analyze(cb, p).get(A).level() == Behavior.Level.ODD);
+        // Lag: packets bunched into the same tick after the hit (equal spans required).
+        List<Event> lb = new ArrayList<>();
+        for (Event e : hb) {
+            if (e instanceof OtherStateEvent o && hitTicks.contains(o.tick() - 2)) {
+                lb.add(new OtherStateEvent(o.t(), o.tick() - 1, o.id(), o.x(), o.y(), o.z(), o.yaw(), o.pitch(), o.onGround(), o.sprinting(), null));
+            } else lb.add(e);
+        }
+        Behavior.Result lk = Behavior.analyze(lb, p).get(A).get(Behavior.Check.KEEP_SPRINT);
+        check("B: пачка пакетов от лага не срабатывает", lk.cases().isEmpty() && !lk.flagged());
+        // A weak hit (swing too recent) and our own hit right before are skipped.
+        List<Event> weak = new ArrayList<>();
+        for (Event e : cb) {
+            if (e instanceof OtherAnimEvent w && w.t() % 50 == 0) weak.add(new OtherAnimEvent(w.t() + 600, w.tick(), w.id(), w.anim()));
+            else weak.add(e);
+        }
+        weak.sort(Comparator.comparingLong(Event::t));
+        check("B: удар без полного заряда пропускается", Behavior.analyze(weak, p).get(A).get(Behavior.Check.KEEP_SPRINT).checked() == 0);
+        List<Event> mine = new ArrayList<>(cb);
+        for (int tk : hitTicks) mine.add(atk(tk * 50L - 100, A, Outcome.HIT_CONFIRMED, 2.8, 1f));
+        mine.sort(Comparator.comparingLong(Event::t));
+        check("B: наш удар рядом пропускается", Behavior.analyze(mine, p).get(A).get(Behavior.Check.KEEP_SPRINT).checked() == 0);
+        Behavior.Params loose = new Behavior.Params(3, 0.01, 500, 10, 80, 95);
+        check("B: порог минимума ударов из настроек", !Behavior.analyze(cb, loose).get(A).get(Behavior.Check.KEEP_SPRINT).flagged());
+        check("перезарядка оружия", near(Behavior.cooldownTicks(Weapon.SWORD, null), 12.5, 1e-9)
+                && near(Behavior.cooldownTicks(Weapon.AXE, "minecraft:iron_axe"), 20 / 0.9, 1e-9)
+                && Double.isNaN(Behavior.cooldownTicks(Weapon.OTHER, null)));
+        Settings s = new Settings();
+        check("разбор по умолчанию включён, пороги из ТЗ", s.behavior && s.behaviorParams().equals(Behavior.Params.DEFAULT));
     }
 
     static void bufferTrimAndSnapshot() {
