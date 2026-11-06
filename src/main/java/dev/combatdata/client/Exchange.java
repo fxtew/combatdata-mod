@@ -43,6 +43,32 @@ public final class Exchange {
         });
     }
 
+    /**
+     * Writes the export like export() and puts the file itself on the clipboard, to paste into a chat as an
+     * attachment. Where the system cannot do that, the folder opens instead.
+     */
+    public static void copyFile(Request req, Consumer<String> done, Consumer<String> failed) {
+        Tasks.run(() -> {
+            try {
+                Path out = write(req);
+                boolean ok = FileClipboard.copy(out);
+                Minecraft.getInstance().execute(() -> {
+                    if (ok) {
+                        done.accept(t("Файл скопирован: вставьте в чат (Ctrl+V) · ", "File copied: paste it into a chat (Ctrl+V) · ")
+                                + out.getFileName());
+                    } else {
+                        Util.getPlatform().openUri(Recordings.exportsDir().toUri());
+                        failed.accept(t("Не удалось скопировать файл, открыта папка: ", "Could not copy the file, the folder is open: ")
+                                + out.getFileName());
+                    }
+                });
+            } catch (Exception e) {
+                CombatDataClient.LOG.warn("[CD] экспорт: {}", e.toString());
+                Minecraft.getInstance().execute(() -> failed.accept(t("Не удалось сохранить: ", "Could not save: ") + e.getMessage()));
+            }
+        });
+    }
+
     static Path write(Request req) throws IOException {
         Share.Options o = req.options();
         String mod = Recorder.modVersion();
