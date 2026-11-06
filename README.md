@@ -24,9 +24,10 @@ statistics and charts in game. It only observes: nothing is sent over the networ
 |---|---|
 | Right Shift | Open the menu |
 | F9 | Save the buffer |
-| unbound | Add a marker, reset the buffer, show or hide indicators |
+| unbound | Add a marker, reset the buffer, show or hide indicators, turn recording on or off |
 
-Commands: `/combatdata open`, `/combatdata save`, `/combatdata marker`, `/combatdata reset confirm`.
+Commands: `/combatdata open`, `/combatdata save`, `/combatdata marker`, `/combatdata reset confirm`,
+`/combatdata record on|off|toggle`.
 With [Mod Menu](https://modrinth.com/mod/modmenu) installed, the menu also opens from the mod list.
 
 ## Building

@@ -49,11 +49,11 @@ public final class FightHud {
 
     static void tick() {
         Settings s = CombatDataClient.settings();
-        if (!s.fightSummary || !Recorder.active()) return;
+        if (!s.fightSummary || !Recorder.capturing()) return;
         long last = Recorder.lastCombatMs(), now = Recorder.now(), quiet = s.fsDelaySec * 1000L;
         if (last < 0 || last > now || now - last < quiet || last == checkedFor) return;
         checkedFor = last;
-        Recording rec = Recorder.liveCopy();
+        Recording rec = Recorder.windowCopy();
         FightSummary.Result r = FightSummary.last(rec, rec.durationMs(), quiet, s.jumpParams(), s.interpMs,
                 s.statFilter(), s.tradeParams());
         if (r != null) {
