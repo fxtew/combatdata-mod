@@ -1,7 +1,5 @@
 package dev.combatdata.client;
 
-import dev.combatdata.CombatDataClient;
-
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -48,11 +46,11 @@ public final class Tasks {
                         if (k.equals(key)) {
                             value = v;
                             valueKey = k;
-                            busy = false;
                         }
                     }
-                } catch (Exception e) {
-                    if (!Thread.currentThread().isInterrupted()) CombatDataClient.LOG.warn("[CD] фоновая задача: {}", e.toString());
+                } catch (Exception | LinkageError | StackOverflowError e) {
+                    if (!Thread.currentThread().isInterrupted()) Safe.report("фоновая задача", e);
+                } finally {
                     synchronized (this) {
                         if (k.equals(key)) busy = false;
                     }

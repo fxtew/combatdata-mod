@@ -48,9 +48,121 @@ public final class CoreTests {
         autosaveAndFixes();
         indicators();
         aimReport();
+        speedups();
         // Check names are ASCII: the Windows console (CP866) garbles Cyrillic.
         System.out.println("CoreTests: " + checks + " checks, " + failures + " failed");
         if (failures > 0) System.exit(1);
+    }
+
+    /** The angle from the old version of Behavior.missDeg: acos on every corner and arc. */
+    static double missDegReference(Geometry.V3 eye, Geometry.V3 look, Geometry.Aabb box) {
+        if (Double.isFinite(box.rayDistance(eye, look))) return 0;
+        Geometry.V3 v = look.norm();
+        Geometry.V3[] c = new Geometry.V3[8];
+        for (int i = 0; i < 8; i++) {
+            c[i] = new Geometry.V3((i & 1) == 0 ? box.minX() : box.maxX(), (i & 2) == 0 ? box.minY() : box.maxY(),
+                    (i & 4) == 0 ? box.minZ() : box.maxZ()).sub(eye).norm();
+        }
+        double best = Math.PI;
+        for (int i = 0; i < 8; i++) {
+            best = Math.min(best, Math.acos(Math.max(-1, Math.min(1, v.dot(c[i])))));
+            for (int j = i + 1; j < 8; j++) {
+                Geometry.V3 a = c[i], b = c[j];
+                Geometry.V3 n = new Geometry.V3(a.y() * b.z() - a.z() * b.y(), a.z() * b.x() - a.x() * b.z(), a.x() * b.y() - a.y() * b.x());
+                double nl = n.len(), arc;
+                if (nl < 1e-12) {
+                    arc = Math.min(Math.acos(Math.max(-1, Math.min(1, v.dot(a)))), Math.acos(Math.max(-1, Math.min(1, v.dot(b)))));
+                } else {
+                    n = n.scale(1 / nl);
+                    Geometry.V3 p = v.sub(n.scale(v.dot(n)));
+                    if (p.len() < 1e-12) {
+                        arc = Math.PI / 2;
+                    } else {
+                        p = p.norm();
+                        Geometry.V3 ap = new Geometry.V3(a.y() * p.z() - a.z() * p.y(), a.z() * p.x() - a.x() * p.z(), a.x() * p.y() - a.y() * p.x());
+                        Geometry.V3 pb = new Geometry.V3(p.y() * b.z() - p.z() * b.y(), p.z() * b.x() - p.x() * b.z(), p.x() * b.y() - p.y() * b.x());
+                        boolean inside = ap.dot(n) >= 0 && pb.dot(n) >= 0;
+                        arc = inside ? Math.acos(Math.max(-1, Math.min(1, v.dot(p))))
+                                : Math.min(Math.acos(Math.max(-1, Math.min(1, v.dot(a)))), Math.acos(Math.max(-1, Math.min(1, v.dot(b)))));
+                    }
+                }
+                best = Math.min(best, arc);
+            }
+        }
+        return Math.toDegrees(best);
+    }
+
+    static void speedups() {
+        Random r = new Random(11);
+        boolean same = true, bound = true;
+        for (int i = 0; i < 20000; i++) {
+            Geometry.V3 eye = new Geometry.V3(r.nextGaussian() * 2, 65 + r.nextGaussian(), r.nextGaussian() * 2);
+            Geometry.V3 look = Behavior.look((float) (r.nextDouble() * 360 - 180), (float) (r.nextDouble() * 180 - 90));
+            double bx = r.nextGaussian() * 3, bz = r.nextGaussian() * 3, by = 64 + r.nextGaussian() * 0.5;
+            Geometry.Aabb box = new Geometry.Aabb(bx - 0.3, by, bz - 0.3, bx + 0.3, by + 1.8, bz + 0.3);
+            double fast = Behavior.missDeg(eye, look, box), ref = missDegReference(eye, look, box);
+            same &= Math.abs(fast - ref) < 1e-6;
+            bound &= Behavior.missDegLowerBound(eye, look, box) <= fast + 1e-9;
+        }
+        check("E: угол до хитбокса через косинусы как раньше", same);
+        check("E: нижняя оценка угла не больше точного", bound);
+        check("E: глаз внутри хитбокса, оценка 0", Behavior.missDegLowerBound(new Geometry.V3(0, 65, 0), Behavior.look(0, 0),
+                new Geometry.Aabb(-0.3, 64, -0.3, 0.3, 65.8, 0.3)) == 0);
+
+        List<Long> times = List.of(100L, 200L, 300L, 400L);
+        check("поиск по времени", Behavior.firstAtOrAfter(times, 50) == 0 && Behavior.firstAtOrAfter(times, 200) == 1
+                && Behavior.firstAtOrAfter(times, 201) == 2 && Behavior.firstAtOrAfter(times, 401) == 4);
+        IncomingHitEvent at350 = new IncomingHitEvent(350, 0, A, "Alpha", true, false, true, 40);
+        IncomingHitEvent at310 = new IncomingHitEvent(310, 0, A, "Alpha", true, false, true, 40);
+        check("предыдущий замах двоичным поиском", Behavior.prevSwing(at350, times) == 300 && Behavior.prevSwing(at310, times) == 200
+                && Behavior.prevSwing(new IncomingHitEvent(110, 0, A, "Alpha", true, false, true, 40), times) == -1);
+
+        // The lazy head must look exactly like a buffer that drops old events at once.
+        RecordingBuffer b = new RecordingBuffer();
+        List<Event> naive = new ArrayList<>();
+        boolean ok = true;
+        long cap = 500;
+        for (int i = 0; i < 3000; i++) {
+            long t = i * 10L;
+            Event e = i % 7 == 0 ? atk(t, A, Outcome.HIT_CONFIRMED, 2.5, 1f) : i % 50 == 1
+                    ? new SegmentEvent(t, "s" + i, "minecraft:overworld", 1000 + t) : new PingEvent(t, 40);
+            b.add(e);
+            naive.add(e);
+            b.trim(t, cap);
+            naive.removeIf(x -> x.t() < t - cap);
+            ok &= b.size() == naive.size();
+            boolean combat = false;
+            for (Event x : naive) combat |= x instanceof AttackEvent;
+            ok &= b.hasCombatEvents() == combat && b.combatEvents().size() == naive.stream().filter(x -> x instanceof AttackEvent).count();
+            if (i % 97 == 0) {
+                Recording c = b.copy(t, cap, "me", null, "x", 5000);
+                ok &= (i < 51 || c.events().get(0) instanceof SegmentEvent) && c.events().get(c.events().size() - 1).t() == Math.min(t, cap);
+            }
+        }
+        int before = b.size();
+        b.add(new PingEvent(29_700, 40));
+        check("буфер: ленивое вытеснение совпадает с обычным", ok);
+        check("буфер: запоздавшее событие встаёт по времени", b.size() == before + 1
+                && b.copy(29_990, cap, "me", null, "x", 0).events().stream().anyMatch(x -> x instanceof PingEvent p && p.t() == 29_700 - 29_490));
+
+        List<Event> mixed = List.of(new PingEvent(1, 40), pos(2, 0, 3), new OtherAnimEvent(3, 0, A, OtherAnimEvent.Anim.SWING),
+                new OtherStateEvent(4, 0, A, 3, 64, 0, 0, 0, true, true, null), atk(5, A, Outcome.MISS, 3.5, 1f));
+        List<Event> combatOnly = Stats.withoutMovement(mixed);
+        check("статистика без событий движения", combatOnly.size() == 2 && combatOnly.get(0) instanceof PingEvent
+                && combatOnly.get(1) instanceof AttackEvent && Stats.movement(mixed.get(1)) && !Stats.movement(mixed.get(0)));
+
+        boolean exact = true;
+        for (String s : List.of("0", "-0", "-0.0", "12", "-7", "3.25", "0.145", "123456789012345", "1234567890123456", "1e5",
+                "2.5E-3", "65.62000000000001", "-179.99", "0.1", "1.7976931348623157E308")) {
+            double got = ((Double) ((List<?>) Json.parse("[" + s + "]")).get(0));
+            exact &= Double.doubleToRawLongBits(got) == Double.doubleToRawLongBits(Double.parseDouble(s));
+        }
+        for (int i = 0; i < 20000; i++) {
+            String s = Double.toString((r.nextDouble() - 0.5) * Math.pow(10, r.nextInt(10) - 4));
+            exact &= Double.doubleToRawLongBits((Double) Json.parse(s)) == Double.doubleToRawLongBits(Double.parseDouble(s));
+        }
+        check("JSON: числа читаются точно как parseDouble", exact);
+        check("JSON: строки с escape и без", Json.parse("[\"a\\\"b\",\"plain\",\"\"]").equals(List.of("a\"b", "plain", "")));
     }
 
     static void indicators() {

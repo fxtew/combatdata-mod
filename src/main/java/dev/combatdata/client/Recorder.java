@@ -46,6 +46,7 @@ public final class Recorder {
     private static boolean connected;
     private static String server = "", dimension = "", playerName;
     private static UUID playerUuid;
+    private static Object namedPlayer;
     private static long lastPingMs = -PING_INTERVAL_MS;
     private static int lastPing;
     private static long lastSaveWall;
@@ -202,8 +203,11 @@ public final class Recorder {
         boolean conn = mc.player != null && mc.level != null && mc.getConnection() != null;
         if (conn) {
             if (!connected) Indicators.newSession();
-            playerName = mc.player.getName().getString();
-            playerUuid = mc.player.getUUID();
+            if (mc.player != namedPlayer) {
+                namedPlayer = mc.player;
+                playerName = mc.player.getName().getString();
+                playerUuid = mc.player.getUUID();
+            }
             if (mc.isPaused()) CLOCK.pause(nowNs);
             else CLOCK.resume(nowNs);
             String srv = serverName(mc), dim = dimensionName(mc.level);
@@ -497,8 +501,16 @@ public final class Recorder {
         return mc.hasSingleplayerServer() ? "singleplayer" : "unknown";
     }
 
+    private static Object dimensionKey;
+    private static String dimensionId = "";
+
+    /** Called every tick; the key object only changes with the dimension, so its name is built once. */
     private static String dimensionName(ClientLevel level) {
-        return level.dimension().identifier().toString();
+        if (level.dimension() != dimensionKey) {
+            dimensionKey = level.dimension();
+            dimensionId = level.dimension().identifier().toString();
+        }
+        return dimensionId;
     }
 
     private static String sanitize(String s) {
@@ -507,8 +519,9 @@ public final class Recorder {
     }
 
     public static String clock(long ms) {
-        long s = ms / 1000;
-        return String.format("%02d:%02d", s / 60, s % 60);
+        // Drawn every frame by the REC label, so no String.format here.
+        long s = Math.max(0, ms) / 1000, m = s / 60, r = s % 60;
+        return (m < 10 ? "0" : "") + m + (r < 10 ? ":0" : ":") + r;
     }
 
     private static String mcVersion() {

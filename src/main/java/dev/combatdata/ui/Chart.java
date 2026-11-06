@@ -24,6 +24,9 @@ final class Chart {
     long cursor = -1;
     java.util.function.LongConsumer onTimeClick;
     private Object pinned;
+    private Point detailsFor;
+    private List<String[]> details;
+    private boolean english;
     private boolean dragging, moved;
     private double pressX;
     private int gx, gy, gw, gh;
@@ -69,8 +72,14 @@ final class Chart {
         int colX = Integer.MIN_VALUE, colMin = 0, colMax = 0, prevX = 0, prevY = 0;
         boolean has = false;
         long prevT = 0;
-        int i0 = 0;
-        while (i0 < line.t().length && line.t()[i0] < view.from() - line.gapMs()) i0++;
+        // First sample in view: the distance line has a sample per tick of every fight.
+        long from = view.from() - line.gapMs();
+        int i0 = 0, hi = line.t().length;
+        while (i0 < hi) {
+            int mid = (i0 + hi) >>> 1;
+            if (line.t()[mid] < from) i0 = mid + 1;
+            else hi = mid;
+        }
         for (int i = i0; i < line.t().length; i++) {
             long t = line.t()[i];
             if (t > view.to() + line.gapMs()) break;
@@ -125,8 +134,10 @@ final class Chart {
             Draw.dashH(g, gx, gx + gw, ly, 3, 2, axis.dashColors()[i]);
         }
 
-        xs = new double[pts.size()];
-        ys = new double[pts.size()];
+        if (xs.length != pts.size()) {
+            xs = new double[pts.size()];
+            ys = new double[pts.size()];
+        }
         for (int i = 0; i < pts.size(); i++) {
             Point p = pts.get(i);
             if (p.t() < view.from() || p.t() > view.to()) {
@@ -182,7 +193,14 @@ final class Chart {
 
         if (pin >= 0) {
             g.nextStratum();
-            popup(ui, xs[pin], ys[pin], pts.get(pin).details().get(), x, y, w, h);
+            // Details can scan the whole recording, so they are built once per point, not every frame.
+            Point pp = pts.get(pin);
+            if (pp != detailsFor || english != dev.combatdata.core.Lang.english()) {
+                detailsFor = pp;
+                english = dev.combatdata.core.Lang.english();
+                details = pp.details().get();
+            }
+            popup(ui, xs[pin], ys[pin], details, x, y, w, h);
         } else if (hover >= 0) {
             g.nextStratum();
             tooltip(ui, xs[hover], ys[hover], pts.get(hover).tip(), x, w);

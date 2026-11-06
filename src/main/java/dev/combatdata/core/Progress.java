@@ -132,7 +132,7 @@ public final class Progress {
 
     public static Summary summarize(String file, Recording r, Rules rules, StatFilter sf, long tradeGapMs,
                                     boolean withOpponents) {
-        List<Event> kept = dropSmallFights(sf.apply(r.events()).kept(), sf);
+        List<Event> kept = dropSmallFights(sf.apply(Stats.withoutMovement(r.events())).kept(), sf);
         Recording sub = new Recording(r.schema(), r.player(), r.playerUuid(), r.mcVersion(), r.wallStartMs(),
                 r.durationMs(), kept);
         Trades.Params tp = new Trades.Params(tradeGapMs, false);
