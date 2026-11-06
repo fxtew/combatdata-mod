@@ -20,8 +20,9 @@ public final class RecordingBuffer {
         int i = events.size();
         while (i > 0 && events.get(i - 1).t() > e.t()) i--;
         events.add(i, e);
-        // Ping and key events barely affect stats, so they don't trigger a recompute.
-        if (!(e instanceof PingEvent || e instanceof InputEvent || e instanceof PositionEvent)) version++;
+        // Ping, key and movement events barely affect stats, so they don't trigger a recompute.
+        if (!(e instanceof PingEvent || e instanceof InputEvent || e instanceof PositionEvent || e instanceof OtherStateEvent
+                || e instanceof OtherAnimEvent)) version++;
         if (combat(e)) combat++;
     }
 

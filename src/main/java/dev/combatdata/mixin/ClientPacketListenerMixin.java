@@ -1,6 +1,7 @@
 package dev.combatdata.mixin;
 
 import dev.combatdata.client.IncomingCapture;
+import dev.combatdata.client.PositionCapture;
 import dev.combatdata.client.Safe;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -22,6 +23,11 @@ public abstract class ClientPacketListenerMixin {
         Minecraft mc = Minecraft.getInstance();
         if (packet.getAction() == ClientboundAnimatePacket.CRITICAL_HIT && mc.player != null && packet.getId() == mc.player.getId()) {
             Safe.run("крит по нам", IncomingCapture::onCritOnMe);
+        } else if (packet.getAction() == ClientboundAnimatePacket.SWING_MAIN_HAND && mc.level != null && mc.player != null
+                && packet.getId() != mc.player.getId()) {
+            // The server sends a swing to everyone tracking the player except the player themselves.
+            var entity = mc.level.getEntity(packet.getId());
+            if (entity != null) Safe.run("взмах соседа", () -> PositionCapture.onSwing(entity));
         }
     }
 }
