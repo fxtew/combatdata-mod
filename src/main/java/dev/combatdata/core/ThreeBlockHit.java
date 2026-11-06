@@ -30,6 +30,21 @@ public final class ThreeBlockHit {
 
     /** Assumes the target's range equals ours (3.0 if unknown). */
     public static boolean is(AttackEvent a, int interpMs) {
-        return classifiable(a, interpMs) && opponentDistance(a, interpMs) > a.rangeOr(AttackEvent.DEFAULT_RANGE);
+        return is(a, interpMs, Double.NaN);
+    }
+
+    /** oppRange: the target's range from the server profile; NaN means the same as ours. */
+    public static boolean is(AttackEvent a, int interpMs, double oppRange) {
+        double range = Double.isFinite(oppRange) && oppRange > 0 ? oppRange : a.rangeOr(AttackEvent.DEFAULT_RANGE);
+        return classifiable(a, interpMs) && opponentDistance(a, interpMs) > range;
+    }
+
+    public static boolean is(AttackEvent a, Rules rules) {
+        Rules.Part p = rules.at(a.t());
+        return is(a, p.interpMs(), p.oppRange());
+    }
+
+    public static double opponentDistance(AttackEvent a, Rules rules) {
+        return opponentDistance(a, rules.at(a.t()).interpMs());
     }
 }

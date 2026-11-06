@@ -46,10 +46,11 @@ public final class ProgressData {
 
     public static synchronized void request(Settings s, boolean force) {
         StatFilter sf = s.statFilter();
-        JumpResetEvaluator.Params p = s.jumpParams();
-        int interp = s.interpMs;
         long gap = s.tradeGapMs;
-        String key = Progress.cacheKey(sf, p, interp, gap);
+        ServerProfiles profiles = CombatDataClient.profiles();
+        String key = Progress.cacheKey(sf, s, profiles, gap);
+        // A copy: the settings draft may change while the thread runs.
+        Settings snap = s.copy();
         Snapshot cur = snapshot;
         if (running) {
             if (key.equals(runningKey)) return;
@@ -61,12 +62,12 @@ public final class ProgressData {
         running = true;
         stale = false;
         runningKey = key;
-        Thread t = new Thread(() -> run(key, sf, p, interp, gap), "combatdata-progress");
+        Thread t = new Thread(() -> run(key, sf, snap, profiles, gap), "combatdata-progress");
         t.setDaemon(true);
         t.start();
     }
 
-    private static void run(String key, StatFilter sf, JumpResetEvaluator.Params p, int interp, long gap) {
+    private static void run(String key, StatFilter sf, Settings s, ServerProfiles profiles, long gap) {
         try {
             ProgressCache cache = ProgressCache.load(cacheFile());
             List<Recordings.Entry> list = Recordings.list();
@@ -80,18 +81,19 @@ public final class ProgressData {
                 String name = e.file().getFileName().toString();
                 names.add(name);
                 byFile.put(name, e);
-                Progress.Summary s = cache.get(name, e.modified(), key);
-                if (s == null) {
+                Progress.Summary sum = cache.get(name, e.modified(), key);
+                if (sum == null) {
                     status = i + " / " + list.size();
                     try {
-                        s = Progress.summarize(name, Cdrec.read(e.file()), p, interp, sf, gap);
-                        cache.put(name, e.modified(), key, s);
+                        Recording r = Cdrec.read(e.file());
+                        sum = Progress.summarize(name, r, Rules.of(r.events(), profiles, s), sf, gap, true);
+                        cache.put(name, e.modified(), key, sum);
                     } catch (Exception ex) {
                         CombatDataClient.LOG.warn("[CD] прогресс: не читается {}: {}", name, ex.toString());
                         continue;
                     }
                 }
-                out.add(s);
+                out.add(sum);
             }
             cache.retain(names);
             if (cache.dirty()) {

@@ -40,7 +40,7 @@ Requires JDK 25.
 ```
 
 The jar is written to `build/libs/`. Recordings are stored in `.minecraft/combatdata/recordings/`, settings in
-`config/combatdata.json`.
+`config/combatdata.json`, server profiles (how each server's recordings are rated) in `config/combatdata-servers.json`.
 
 ## License
 
