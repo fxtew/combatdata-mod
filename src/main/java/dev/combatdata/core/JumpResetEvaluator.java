@@ -32,6 +32,11 @@ public final class JumpResetEvaluator {
      * scanning every jump per hit. Matters for the live buffer, which is recomputed every second.
      */
     public static List<Attempt> evaluate(List<Event> events, Params p) {
+        return evaluate(events, Rules.single(p, 0));
+    }
+
+    /** Each hit is rated by the window of the server it was taken on. */
+    public static List<Attempt> evaluate(List<Event> events, Rules rules) {
         List<IncomingHitEvent> hits = new ArrayList<>();
         List<JumpEvent> jumps = new ArrayList<>();
         for (Event e : events) {
@@ -48,6 +53,7 @@ public final class JumpResetEvaluator {
                 out.add(new Attempt(h, false, -1, 0, Result.NOT_APPLICABLE, h.jumpHeld()));
                 continue;
             }
+            Params p = rules.at(h.t()).jump();
             int best = -1;
             double bestDist = Double.MAX_VALUE;
             long bestAbs = Long.MAX_VALUE;

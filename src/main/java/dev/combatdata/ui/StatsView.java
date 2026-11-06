@@ -109,6 +109,10 @@ final class StatsView {
     private Cooldown.Summary cdSum = Cooldown.summary(List.of());
     private double rangeLine = AttackEvent.DEFAULT_RANGE;
     private long computeMs;
+    private Rules rules = Rules.single(JumpResetEvaluator.Params.DEFAULT, ThreeBlockHit.DEFAULT_INTERP_MS);
+    private Rules.Part mainPart = rules.at(0);
+    /** A profile chosen to view the whole recording "as if on that server"; null rates each part by its own server. */
+    private ServerProfile viewAs;
 
     StatsView(MenuScreen menu) {
         this.menu = menu;
@@ -122,6 +126,7 @@ final class StatsView {
             oppName = null;
             timeFrom = timeTo = -1;
             weaponOverride = null;
+            viewAs = null;
             filtersOff = false;
             scroll = 0;
             jrChart = new Chart();
@@ -157,24 +162,29 @@ final class StatsView {
     private void ensure() {
         Settings s = CombatDataClient.settings();
         StatFilter cur = effectiveFilter(s);
-        String k = s.jumpParams() + "/" + s.interpMs + "/" + opp + "/" + timeFrom + "/" + timeTo + "/" + showFails
+        ServerProfiles profiles = CombatDataClient.profiles();
+        // The profiles version, not their contents: building a key from every profile each frame is wasteful.
+        String k = s.jumpParams() + "/" + s.interpMs + "/" + profiles.version() + "/" + (viewAs == null ? "" : viewAs.address)
+                + "/" + opp + "/" + timeFrom + "/" + timeTo + "/" + showFails
                 + showNoJump + showMisses + showUnconfirmed + showFlyOut + Lang.english() + "/" + cur
                 + showFiltered + "/" + s.tradeParams() + "/" + showProjectiles;
         if (k.equals(key)) return;
         key = k;
         long started = System.nanoTime();
         sf = cur;
-        all = Stats.compute(rec, s.jumpParams(), Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, s.interpMs, sf, s.tradeParams());
+        rules = viewAs != null ? Rules.with(viewAs, s) : Rules.of(rec.events(), profiles, s);
+        mainPart = rules.main(rec.events());
+        all = Stats.compute(rec, rules, Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, sf, s.tradeParams());
         boolean filtered = opp != null || timeFrom >= 0;
         Stats.Filter f = !filtered ? Stats.Filter.ALL
                 : new Stats.Filter(timeFrom >= 0 ? timeFrom : 0, timeFrom >= 0 ? timeTo : Long.MAX_VALUE, opp);
-        res = !filtered ? all : Stats.compute(rec, s.jumpParams(), f, AttackEvent.DEFAULT_RANGE, s.interpMs, sf, s.tradeParams());
+        res = !filtered ? all : Stats.compute(rec, rules, f, AttackEvent.DEFAULT_RANGE, sf, s.tradeParams());
         rawEvents = Stats.events(rec, f);
         StatFilter.Applied ap = sf.apply(rawEvents);
         events = ap.kept();
-        attempts = JumpResetEvaluator.evaluate(events, s.jumpParams());
+        attempts = JumpResetEvaluator.evaluate(events, rules);
         timeline = buildTimeline();
-        trades = Trades.split(events, s.tradeParams(), sf, s.jumpParams());
+        trades = Trades.split(events, s.tradeParams(), sf, attempts);
         jrPoints = buildJumpPoints(s);
         hitPoints = buildHitPoints(s);
         takenPoints = buildTakenPoints();
@@ -185,8 +195,8 @@ final class StatsView {
         cdSum = Cooldown.summary(kept);
         wtap = WTap.analyze(events);
         aim = AimReport.analyze(events);
-        calib = Calibration.analyze(attempts, s.jumpParams());
-        insights = Insights.evaluate(new Insights.Input(res, s.jumpParams()));
+        calib = Calibration.analyze(attempts, mainPart.jump());
+        insights = Insights.evaluate(new Insights.Input(res, mainPart.jump()));
         computeMs = (System.nanoTime() - started) / 1_000_000L;
     }
 
@@ -348,6 +358,35 @@ final class StatsView {
     }
 
 
+    /** Which server profile rates the recording; a click views it as if it were played on the next profile. */
+    private void profileChip(Ui ui, Flow f, int w) {
+        String label;
+        if (viewAs != null) {
+            label = t("Как на: ", "As on: ") + Draw.ellipsize(ui.font, viewAs.shownName(), w / 3) + " · " + ServersPanel.presetName(viewAs.preset);
+        } else if (rules.parts().size() > 1) {
+            label = t("Профили: ", "Profiles: ") + rules.parts().size() + t(" сервера", " servers");
+        } else {
+            ServerProfile p = mainPart.profile();
+            label = t("Профиль: ", "Profile: ") + (p == null ? t("по умолчанию", "default")
+                    : Draw.ellipsize(ui.font, p.shownName(), w / 3) + " · " + ServersPanel.presetName(p.preset));
+        }
+        int cw = ui.font.width(label) + 12;
+        int[] p = f.place(cw, false);
+        ui.chip(p[0], p[1] + 3, cw, label, viewAs != null, () -> {
+            List<ServerProfile> list = CombatDataClient.profiles().list();
+            if (list.isEmpty()) return;
+            int i = -1;
+            for (int k = 0; viewAs != null && k < list.size(); k++) if (list.get(k).address.equals(viewAs.address)) i = k;
+            viewAs = i + 1 < list.size() ? list.get(i + 1) : null;
+        });
+        if (ui.hover(p[0], p[1] + 3, cw, 14)) {
+            ui.tip(viewAs != null ? t("Временно: вся запись как на этом сервере. Клик: следующий, после последнего обратно",
+                    "Temporary: the whole recording as on this server. Click: next, after the last back")
+                    : t("Каждая часть записи по профилю своего сервера. Клик: посмотреть как на другом",
+                    "Each part is rated by its server's profile. Click: view as on another"));
+        }
+    }
+
     private int controls(Ui ui, int x, int y, int w) {
         Flow f = new Flow(x, y, w);
         boolean any = false;
@@ -385,6 +424,7 @@ final class StatsView {
                 StatFilter.WeaponView[] vs = StatFilter.WeaponView.values();
                 weaponOverride = vs[(wv.ordinal() + 1) % vs.length];
             });
+            profileChip(ui, f, w);
             any = true;
         }
         if (graphKind() != 0) {
@@ -604,8 +644,8 @@ final class StatsView {
         Chart c = chart();
         c.total(rec.durationMs());
         if (graphKind() == 1) {
-            c.render(ui, x, y + 12, w, h - 12, jrPoints, new Chart.Axis(-s.jrPreMs, s.jrPostMs, 50,
-                    v -> String.valueOf((long) v), s.jrLowerMs, s.jrUpperMs, Theme.alpha(Theme.GREEN, 0x40),
+            c.render(ui, x, y + 12, w, h - 12, jrPoints, new Chart.Axis(-mainPart.jump().preMs(), mainPart.jump().postMs(), 50,
+                    v -> String.valueOf((long) v), mainPart.jump().lowerMs(), mainPart.jump().upperMs(), Theme.alpha(Theme.GREEN, 0x40),
                     new double[]{0}, new int[]{Theme.MUTED}));
         } else if (graphKind() == 4) {
             c.render(ui, x, y + 12, w, h - 12, takenPoints, new Chart.Axis(0, 6, 1, v -> String.valueOf((long) v),
@@ -674,7 +714,6 @@ final class StatsView {
         }
         distMean = sum / ts.length;
         distLine = new Chart.Line(ts, vs, Theme.MUTED, Distance.MAX_GAP_MS);
-        int interp = CombatDataClient.settings().interpMs;
         List<Chart.Point> out = new ArrayList<>();
         for (Event e : rawEvents) {
             if (e instanceof AttackEvent a && a.outcome() == Outcome.HIT_CONFIRMED && distOpp.equals(a.target())) {
@@ -682,7 +721,7 @@ final class StatsView {
                 double d = Distance.at(distSeries, a.t());
                 StatFilter.Hidden why = sf.attack(a);
                 if (Double.isNaN(d) || (why != null && !showFiltered)) continue;
-                int color = why != null ? Theme.FILTERED : ThreeBlockHit.is(a, interp) ? Theme.AMBER : Theme.GREEN;
+                int color = why != null ? Theme.FILTERED : ThreeBlockHit.is(a, rules) ? Theme.AMBER : Theme.GREEN;
                 out.add(new Chart.Point(a.t(), d, color, false, Fmt.clockMs(a.t()) + t(" · ваш удар · ", " · your hit · ")
                         + Fmt.num(d, 2) + t(" бл.", " bl.") + (why != null ? t(" · отфильтровано", " · filtered") : ""),
                         () -> hitDetails(a, CombatDataClient.settings()), a));
@@ -765,7 +804,7 @@ final class StatsView {
             }
         }
         if (showFiltered) {
-            for (JumpResetEvaluator.Attempt a : JumpResetEvaluator.evaluate(rawEvents, s.jumpParams())) {
+            for (JumpResetEvaluator.Attempt a : JumpResetEvaluator.evaluate(rawEvents, rules)) {
                 IncomingHitEvent h = a.hit();
                 StatFilter.Hidden why = sf.incoming(h);
                 if (why == null || a.result() == JumpResetEvaluator.Result.NOT_APPLICABLE) continue;
@@ -780,8 +819,9 @@ final class StatsView {
     private List<String[]> jumpDetails(JumpResetEvaluator.Attempt a, Settings s) {
         IncomingHitEvent h = a.hit();
         long d = a.deltaMs();
-        String rel = !a.hasJump() ? "—" : d < s.jrLowerMs ? t("раньше на ", "early by ") + (s.jrLowerMs - d) + t(" мс", " ms")
-                : d > s.jrUpperMs ? t("позже на ", "late by ") + (d - s.jrUpperMs) + t(" мс", " ms") : t("в окне ", "in window ") + s.jrLowerMs + "…" + s.jrUpperMs + t(" мс", " ms");
+        JumpResetEvaluator.Params jp = rules.at(h.t()).jump();
+        String rel = !a.hasJump() ? "—" : d < jp.lowerMs() ? t("раньше на ", "early by ") + (jp.lowerMs() - d) + t(" мс", " ms")
+                : d > jp.upperMs() ? t("позже на ", "late by ") + (d - jp.upperMs()) + t(" мс", " ms") : t("в окне ", "in window ") + jp.lowerMs() + "…" + jp.upperMs() + t(" мс", " ms");
         List<String[]> rows = new ArrayList<>();
         StatFilter.Hidden why = sf.incoming(h);
         rows.add(new String[]{why != null ? t("Не в статистике: ", "Not counted: ") + hiddenName(why)
@@ -841,7 +881,7 @@ final class StatsView {
             }
             int color;
             switch (a.outcome()) {
-                case HIT_CONFIRMED -> color = ThreeBlockHit.is(a, s.interpMs) ? Theme.AMBER : Theme.GREEN;
+                case HIT_CONFIRMED -> color = ThreeBlockHit.is(a, rules) ? Theme.AMBER : Theme.GREEN;
                 case HIT_UNCONFIRMED -> {
                     if (!showUnconfirmed) continue;
                     color = Theme.DIM;
@@ -852,7 +892,7 @@ final class StatsView {
                 }
             }
             out.add(new Chart.Point(a.t(), a.reach(), color, false, Fmt.clockMs(a.t()) + " · " + nz(a.targetName()) + " · "
-                    + Fmt.num(a.reach(), 2) + t(" бл. · ", " bl. · ") + outcomeName(a, s.interpMs), () -> hitDetails(a, s), a));
+                    + Fmt.num(a.reach(), 2) + t(" бл. · ", " bl. · ") + outcomeName(a, rules), () -> hitDetails(a, s), a));
         }
         return out;
     }
@@ -861,9 +901,9 @@ final class StatsView {
         return cdSum;
     }
 
-    private static String outcomeName(AttackEvent a, int interp) {
+    private static String outcomeName(AttackEvent a, Rules rules) {
         return switch (a.outcome()) {
-            case HIT_CONFIRMED -> ThreeBlockHit.is(a, interp) ? "3 block hit" : t("Попал", "Hit");
+            case HIT_CONFIRMED -> ThreeBlockHit.is(a, rules) ? "3 block hit" : t("Попал", "Hit");
             case HIT_UNCONFIRMED -> t("Без подтверждения", "Unconfirmed");
             case MISS -> a.outOfRangeMiss(a.rangeOr(AttackEvent.DEFAULT_RANGE)) ? t("Не дотянулся", "Out of range") : t("Мимо", "Missed");
         };
@@ -872,7 +912,7 @@ final class StatsView {
     private List<String[]> hitDetails(AttackEvent a, Settings s) {
         List<String[]> rows = new ArrayList<>();
         StatFilter.Hidden why = sf.attack(a);
-        rows.add(new String[]{outcomeName(a, s.interpMs) + (why != null ? t(" · не в статистике: ", " · not counted: ") + hiddenName(why) : ""), ""});
+        rows.add(new String[]{outcomeName(a, rules) + (why != null ? t(" · не в статистике: ", " · not counted: ") + hiddenName(why) : ""), ""});
         rows.add(new String[]{t("Время от начала", "Time from start"), Fmt.clockMs(a.t())});
         rows.add(new String[]{t("Цель", "Target"), nz(a.targetName())});
         rows.add(new String[]{t("Оружие", "Weapon"), weaponText(a.weaponOr(), a.item())});
@@ -891,7 +931,7 @@ final class StatsView {
             rows.add(new String[]{t("Поворот прицела", "Crosshair turn"), Fmt.signed(a.turnDps(), 0) + t("°/с (плюс: вправо)", "°/s (plus: right)")});
         }
         if (a.outcome() == Outcome.HIT_CONFIRMED) {
-            double od = ThreeBlockHit.opponentDistance(a, s.interpMs);
+            double od = ThreeBlockHit.opponentDistance(a, rules);
             rows.add(new String[]{t("У противника на экране", "On opponent's screen"), Double.isNaN(od) ? t("нет данных", "no data") : "≈ " + Fmt.num(od, 1) + t(" бл.", " bl.")});
         }
         rows.add(new String[]{t("Пинг ваш / цели", "Ping yours / target"), (a.pingMs() > 0 ? a.pingMs() + t(" мс", " ms") : "—") + " / "
@@ -999,7 +1039,7 @@ final class StatsView {
         Settings s = CombatDataClient.settings();
         ProgressData.request(s, false);
         ProgressData.Snapshot snap = ProgressData.snapshot();
-        String want = Progress.cacheKey(s.statFilter(), s.jumpParams(), s.interpMs, s.tradeGapMs);
+        String want = Progress.cacheKey(s.statFilter(), s, CombatDataClient.profiles(), s.tradeGapMs);
         // Not keyed on the recording identity: the live buffer is a new object every second, but recompute is only needed on new events.
         long lastT = rec.events().isEmpty() ? 0 : rec.events().get(rec.events().size() - 1).t();
         String k = ProgressData.version() + "/" + want + "/" + rec.wallStartMs() / 60_000 + "/" + rec.events().size() + "/" + lastT;
@@ -1011,7 +1051,7 @@ final class StatsView {
                 List<Progress.Summary> prev = Progress.previous(snap.summaries(), rec.wallStartMs(), COMPARE_WITH);
                 compareN = prev.size();
                 if (!prev.isEmpty()) deltas = Progress.compare(
-                        Progress.summarize(null, rec, s.jumpParams(), s.interpMs, s.statFilter(), s.tradeGapMs, false).all(), prev);
+                        Progress.summarize(null, rec, Rules.of(rec.events(), CombatDataClient.profiles(), s), s.statFilter(), s.tradeGapMs, false).all(), prev);
             }
         }
         if (deltas.isEmpty()) return y;
@@ -1144,7 +1184,7 @@ final class StatsView {
                 new Kv(t("У противника в среднем", "On opponent's screen, mean"), "≈ " + Fmt.num(t.oppDistMean(), 2) + t(" бл.", " bl.")),
                 new Kv(t("Оценено ударов", "Hits rated"), String.valueOf(t.classified())),
                 new Kv(t("Без данных", "No data"), String.valueOf(Math.max(0, h.confirmed() - t.classified()))),
-                new Kv(t("Интерполяция", "Interpolation"), CombatDataClient.settings().interpMs + t(" мс", " ms"))), 2);
+                new Kv(t("Интерполяция", "Interpolation"), mainPart.interpMs() + t(" мс", " ms"))), 2);
     }
 
     private static Card jumpCard(Stats.JumpStats j) {
@@ -1220,8 +1260,8 @@ final class StatsView {
             line(ui, w, t("Нет данных об отлёте: нужны полученные удары в записи новой версии мода.", "No knockback data: needs hits taken in a recording from a newer mod version."), x, y, Theme.DIM);
             return y + LINE;
         }
-        line(ui, w, t("Без прыжка: ", "No jump: ") + kbText(c.baselineKb()) + " (" + c.baselineN() + t(") · в окне ", ") · in window ") + s.jrLowerMs + "…"
-                + s.jrUpperMs + t(" мс: ", " ms: ") + kbText(c.curKb()) + " (" + c.curN() + t(") · попыток с прыжком ", ") · jump attempts ") + c.samples(),
+        line(ui, w, t("Без прыжка: ", "No jump: ") + kbText(c.baselineKb()) + " (" + c.baselineN() + t(") · в окне ", ") · in window ") + mainPart.jump().lowerMs() + "…"
+                + mainPart.jump().upperMs() + t(" мс: ", " ms: ") + kbText(c.curKb()) + " (" + c.curN() + t(") · попыток с прыжком ", ") · jump attempts ") + c.samples(),
                 x, y, Theme.TEXT);
         if (res.jump().flyOut() > 0) {
             y += LINE;
@@ -1248,7 +1288,7 @@ final class StatsView {
             }
             if (b.n() == 0) continue;
             int bh = Math.max(1, (int) (h * b.meanKb() / max));
-            boolean inWindow = b.fromMs() >= s.jrLowerMs && b.toMs() - 1 <= s.jrUpperMs;
+            boolean inWindow = b.fromMs() >= mainPart.jump().lowerMs() && b.toMs() - 1 <= mainPart.jump().upperMs();
             int color = hover == i ? Theme.TEXT_STRONG : b.n() < 3 ? Theme.DIM : inWindow ? Theme.GREEN : Theme.MUTED;
             ui.g.fill(bx + 1, by + h - bh, bx + bw - 1, by + h, color);
         }
@@ -1272,7 +1312,7 @@ final class StatsView {
         if (c.hasRecommendation()) {
             String rec = t("Рекомендуемое окно: ", "Recommended window: ") + c.recLower() + "…" + c.recUpper() + t(" мс, отлёт ", " ms, knockback ") + kbText(c.recKb())
                     + " (" + c.recN() + t(" попыток)", " attempts)");
-            boolean same = c.recLower() == s.jrLowerMs && c.recUpper() == s.jrUpperMs;
+            boolean same = c.recLower() == mainPart.jump().lowerMs() && c.recUpper() == mainPart.jump().upperMs();
             String bl = t("Применить это окно", "Apply this window");
             int bwid = ui.buttonWidth(bl);
             line(ui, same ? w : w - bwid - 8, rec, x, Ui.textY(y, 16), Theme.AMBER);
@@ -1485,7 +1525,6 @@ final class StatsView {
     /** Every swing as a dot at the crosshair, around a silhouette of the target seen from the front. */
     private void aimMap(Ui ui, int x, int y, int cardW, int sh, double k, AimReport.Result r) {
         var g = ui.g;
-        int interp = CombatDataClient.settings().interpMs;
         int cardH = sh + 34;
         Draw.round(g, x, y, cardW, cardH, Theme.R_CTRL, Theme.WINDOW);
         if (aimZoom > 1) {
@@ -1529,7 +1568,7 @@ final class StatsView {
                 px = Math.max(left + 2, Math.min(left + mapW - 3, px));
                 py = Math.max(top + 2, Math.min(top + sh - 3, py));
                 int color = switch (s.kind()) {
-                    case HIT -> ThreeBlockHit.is(s.a(), interp) ? Theme.AMBER : Theme.GREEN;
+                    case HIT -> ThreeBlockHit.is(s.a(), rules) ? Theme.AMBER : Theme.GREEN;
                     case MISS -> Theme.RED;
                     case OUT_OF_RANGE -> Theme.TEXT_STRONG;
                 };
@@ -1802,7 +1841,7 @@ final class StatsView {
                 + (j.success() == 0 ? "—" : Fmt.num(j.meanSuccessMs(), 0) + t(" мс", " ms")) + " · σ "
                 + (j.attempts() == 0 ? "—" : Fmt.num(j.sigmaMs(), 0) + t(" мс", " ms")), x, y, Theme.TEXT);
         y += LINE;
-        line(ui, w, t("Окно успеха ", "Success window ") + s.jrLowerMs + "…" + s.jrUpperMs + t(" мс после удара · рано ", " ms after the hit · early ") + j.early() + t(" · поздно ", " · late ")
+        line(ui, w, t("Окно успеха ", "Success window ") + mainPart.jump().lowerMs() + "…" + mainPart.jump().upperMs() + t(" мс после удара · рано ", " ms after the hit · early ") + j.early() + t(" · поздно ", " · late ")
                 + j.late() + t(" · без прыжка ", " · no jump ") + j.noAttempt() + (j.flyOut() > 0 ? " · fly out " + j.flyOut() : ""), x, y, Theme.MUTED);
         y += LINE + 6;
         if (attempts.isEmpty()) {
@@ -1838,7 +1877,6 @@ final class StatsView {
     private int hitsTab(Ui ui, int x, int y, int w) {
         Stats.HitStats h = res.hits();
         Stats.ThreeBlockStats t = res.threeBlock();
-        int interp = CombatDataClient.settings().interpMs;
         line(ui, w, t("Точность ", "Accuracy ") + Fmt.pct(h.hitRatePct()) + t(" · попаданий ", " · hits ") + h.confirmed() + t(" · промахов ", " · misses ") + h.misses()
                 + t(" · средняя дистанция ", " · mean distance ") + (h.confirmed() == 0 ? "—" : Fmt.num(h.reachMean(), 2)), x, y, Theme.TEXT);
         y += LINE;
@@ -1857,7 +1895,7 @@ final class StatsView {
         else y = header(ui, x, y, w, at, t("Время", "Time"), t("Цель", "Target"), t("Исход", "Result"), t("Дист.", "Dist."), t("Тип", "Type"), t("Заряд", "Charge"), "Yaw", t("У цели", "At target"));
         for (AttackEvent a : list) {
             if (visible(y, ROW)) {
-                boolean tb = ThreeBlockHit.is(a, interp);
+                boolean tb = ThreeBlockHit.is(a, rules);
                 String out;
                 int oc;
                 switch (a.outcome()) {
@@ -1868,7 +1906,7 @@ final class StatsView {
                         oc = Theme.RED;
                     }
                 }
-                double od = ThreeBlockHit.classifiable(a, interp) ? ThreeBlockHit.opponentDistance(a, interp) : Double.NaN;
+                double od = ThreeBlockHit.classifiable(a, rules.at(a.t()).interpMs()) ? ThreeBlockHit.opponentDistance(a, rules) : Double.NaN;
                 if (narrow) cols(ui, x, y, w, at, new String[]{Fmt.clockMs(a.t()), nz(a.targetName()), out, Fmt.num(a.reach(), 2)},
                         new int[]{Theme.MUTED, Theme.TEXT, oc, Theme.TEXT});
                 else cols(ui, x, y, w, at, new String[]{Fmt.clockMs(a.t()), nz(a.targetName()), out, Fmt.num(a.reach(), 2),

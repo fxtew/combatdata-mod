@@ -128,6 +128,16 @@ public final class Recorder {
      * Hits waiting for confirmation are written as on a disconnect.
      */
     public static void setRecording(Minecraft mc, boolean on) {
+        autoOff = false;
+        switchRecording(mc, on, true, connected);
+        Settings s = CombatDataClient.settings();
+        if (!s.hudVisible && mc.player != null) mc.player.sendOverlayMessage(Component.literal(recordingState(on)));
+    }
+
+    /** Recording was turned off by the server profile ("do not record on this server"), not by the player. */
+    private static boolean autoOff;
+
+    private static void switchRecording(Minecraft mc, boolean on, boolean persist, boolean segment) {
         if (on == TIMELINE.on()) return;
         AttackCapture.flushPending();
         IncomingCapture.flushPending();
@@ -136,12 +146,45 @@ public final class Recorder {
         InputCapture.reset();
         toggledWall = System.currentTimeMillis();
         // A new segment keeps the wall time right after the gap and notes a server change made while off.
-        if (on && connected) add(new SegmentEvent(n, server, dimension, toggledWall));
-        Settings s = CombatDataClient.settings();
-        s.recordingEnabled = on;
-        CombatDataClient.saveSettings();
+        if (on && segment) add(new SegmentEvent(n, server, dimension, toggledWall));
+        if (persist) {
+            CombatDataClient.settings().recordingEnabled = on;
+            CombatDataClient.saveSettings();
+        }
         CombatDataClient.LOG.info("[CD] запись {}", on ? "включена" : "выключена");
-        if (!s.hudVisible && mc.player != null) mc.player.sendOverlayMessage(Component.literal(recordingState(on)));
+    }
+
+    private static ServerProfile profile;
+
+    /** Profile of the server we are on, null outside a server. */
+    public static ServerProfile profile() {
+        return profile;
+    }
+
+    /** Rules for hits happening now. */
+    public static Rules liveRules() {
+        return Rules.with(profile, CombatDataClient.settings());
+    }
+
+    /**
+     * Runs before the new server's segment is written. The off state from a profile is not saved to the settings:
+     * after a restart the profile turns recording off again on join.
+     */
+    private static void onServer(Minecraft mc, String srv) {
+        ServerProfiles ps = CombatDataClient.profiles();
+        profile = ps.visit(srv, CombatDataClient.settings(), System.currentTimeMillis());
+        CombatDataClient.saveProfiles();
+        if (profile == null) return;
+        if (profile.noRecord && TIMELINE.on()) {
+            switchRecording(mc, false, false, false);
+            autoOff = true;
+            chat(mc, t("Запись выключена: на этом сервере не записывать (профиль сервера).",
+                    "Recording off: this server is set to not record (server profile)."));
+        } else if (!profile.noRecord && autoOff) {
+            autoOff = false;
+            switchRecording(mc, true, false, false);
+            chat(mc, t("Запись снова включена.", "Recording is on again."));
+        }
     }
 
     public static void toggleRecording(Minecraft mc) {
@@ -178,8 +221,10 @@ public final class Recorder {
                 CombatDataClient.LOG.info("[CD] смена сервера: буфер очищен");
             }
             if (!connected || !srv.equals(server) || !dim.equals(dimension)) {
+                boolean newServer = !connected || !srv.equals(server);
                 server = srv;
                 dimension = dim;
+                if (newServer) onServer(mc, srv);
                 add(new SegmentEvent(now(), srv, dim, System.currentTimeMillis()));
             }
             long n = now();
@@ -219,6 +264,7 @@ public final class Recorder {
         }
         AttackCapture.flushPending();
         IncomingCapture.flushPending();
+        profile = null;
     }
 
     /** Closing the game: save what would be lost and wait for the writer, which is a daemon thread. */

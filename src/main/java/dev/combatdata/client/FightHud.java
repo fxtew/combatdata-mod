@@ -3,6 +3,7 @@ package dev.combatdata.client;
 import dev.combatdata.CombatDataClient;
 import dev.combatdata.core.FightSummary;
 import dev.combatdata.core.Recording;
+import dev.combatdata.core.Rules;
 import dev.combatdata.core.Settings;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -54,8 +55,8 @@ public final class FightHud {
         if (last < 0 || last > now || now - last < quiet || last == checkedFor) return;
         checkedFor = last;
         Recording rec = Recorder.windowCopy();
-        FightSummary.Result r = FightSummary.last(rec, rec.durationMs(), quiet, s.jumpParams(), s.interpMs,
-                s.statFilter(), s.tradeParams());
+        FightSummary.Result r = FightSummary.last(rec, rec.durationMs(), quiet,
+                Rules.of(rec.events(), CombatDataClient.profiles(), s), s.statFilter(), s.tradeParams());
         if (r != null) {
             shown = r;
             shownAtWall = System.currentTimeMillis();

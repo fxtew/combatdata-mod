@@ -35,13 +35,18 @@ public final class FightSummary {
 
     public static Result last(Recording r, long nowMs, long quietMs, JumpResetEvaluator.Params p, int interpMs,
                               StatFilter sf, Trades.Params tp) {
+        return last(r, nowMs, quietMs, Rules.single(p, interpMs), sf, tp);
+    }
+
+    public static Result last(Recording r, long nowMs, long quietMs, Rules rules, StatFilter sf, Trades.Params tp) {
         List<Stats.Fight> fights = Stats.fights(sf.apply(r.events()).kept(), Stats.FIGHT_GAP_MS);
         if (fights.isEmpty()) return null;
         Stats.Fight f = fights.get(fights.size() - 1);
         if (nowMs - f.endMs() < quietMs || !sf.fightCounts(f)) return null;
         // Jumps after the last hit taken still count for jump reset, so the range is slightly wider than the fight.
+        JumpResetEvaluator.Params p = rules.at(f.startMs()).jump();
         Stats.Filter range = new Stats.Filter(Math.max(0, f.startMs() - p.preMs()), f.endMs() + p.postMs(), null);
-        Stats.Result s = Stats.compute(r, p, range, AttackEvent.DEFAULT_RANGE, interpMs, sf, tp);
+        Stats.Result s = Stats.compute(r, rules, range, AttackEvent.DEFAULT_RANGE, sf, tp);
         String opp = null;
         int best = -1;
         for (Stats.OpponentStats o : s.opponents()) {

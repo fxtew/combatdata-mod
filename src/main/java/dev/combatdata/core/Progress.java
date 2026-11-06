@@ -116,16 +116,27 @@ public final class Progress {
 
     public static Summary summarize(String file, Recording r, JumpResetEvaluator.Params p, int interpMs, StatFilter sf,
                                     long tradeGapMs, boolean withOpponents) {
+        return summarize(file, r, Rules.single(p, interpMs), sf, tradeGapMs, withOpponents);
+    }
+
+    /** Cache key with server profiles: only the fields that change ratings, so visiting a server keeps the cache. */
+    public static String cacheKey(StatFilter sf, Settings s, ServerProfiles profiles, long tradeGapMs) {
+        return "v3/" + sf + "/" + s.jumpParams() + "/" + s.interpMs + "/" + tradeGapMs + "/" + profiles.ratingKey();
+    }
+
+    public static Summary summarize(String file, Recording r, Rules rules, StatFilter sf, long tradeGapMs,
+                                    boolean withOpponents) {
         List<Event> kept = dropSmallFights(sf.apply(r.events()).kept(), sf);
         Recording sub = new Recording(r.schema(), r.player(), r.playerUuid(), r.mcVersion(), r.wallStartMs(),
                 r.durationMs(), kept);
+        Trades.Params tp = new Trades.Params(tradeGapMs, false);
         // Filter again so trades respect handNoTrade (already filtered events are unaffected).
-        Stats.Result all = Stats.compute(sub, p, Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, interpMs, sf, tradeGapMs);
+        Stats.Result all = Stats.compute(sub, rules, Stats.Filter.ALL, AttackEvent.DEFAULT_RANGE, sf, tp);
         Map<UUID, Opp> opps = new LinkedHashMap<>();
         for (Stats.OpponentStats o : withOpponents ? all.opponents() : List.<Stats.OpponentStats>of()) {
             if (o.uuid() == null) continue;
-            Stats.Result one = Stats.compute(sub, p, new Stats.Filter(0, Long.MAX_VALUE, o.uuid()),
-                    AttackEvent.DEFAULT_RANGE, interpMs, sf, tradeGapMs);
+            Stats.Result one = Stats.compute(sub, rules, new Stats.Filter(0, Long.MAX_VALUE, o.uuid()),
+                    AttackEvent.DEFAULT_RANGE, sf, tp);
             opps.put(o.uuid(), new Opp(o.name(), Metrics.of(one)));
         }
         Set<String> servers = new LinkedHashSet<>();

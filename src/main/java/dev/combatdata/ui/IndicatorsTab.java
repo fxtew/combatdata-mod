@@ -327,9 +327,9 @@ final class IndicatorsTab implements Tab {
                         () -> c.jrShowSec--, () -> c.jrShowSec++);
                 y = sound(ui, x, y, w, t("Звук: вовремя", "Sound: in time"), c.jrSoundOk, s -> c.jrSoundOk = s);
                 y = sound(ui, x, y, w, t("Звук: рано или поздно", "Sound: early or late"), c.jrSoundBad, s -> c.jrSoundBad = s);
-                var p = CombatDataClient.settings().jumpParams();
-                ui.text(Draw.ellipsize(ui.font, t("Окно " + p.lowerMs() + "–" + p.upperMs() + " мс после удара: Настройки → Дополнительно",
-                        "Window " + p.lowerMs() + "–" + p.upperMs() + " ms after the hit: Settings → Advanced"), w - 20 - INDENT * 2),
+                var p = dev.combatdata.client.Recorder.liveRules().at(0).jump();
+                ui.text(Draw.ellipsize(ui.font, t("Окно " + p.lowerMs() + "–" + p.upperMs() + " мс после удара: Настройки → Дополнительно или Серверы",
+                        "Window " + p.lowerMs() + "–" + p.upperMs() + " ms after the hit: Settings → Advanced or Servers"), w - 20 - INDENT * 2),
                         x + 10 + INDENT * 2, y + 6, Theme.DIM);
                 ui.text(Draw.ellipsize(ui.font, t("Без подписей промах коротко: -20 мс значит рано, +35 мс поздно",
                         "Without captions a miss is short: -20 ms means early, +35 ms late"), w - 20 - INDENT * 2),

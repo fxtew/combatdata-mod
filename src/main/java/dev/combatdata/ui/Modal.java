@@ -13,6 +13,7 @@ public final class Modal {
     final String input;
     final List<Btn> buttons;
     public String error;
+    public int maxLength = 64;
 
     public Modal(String title, List<String> lines, String input, List<Btn> buttons) {
         this.title = title;

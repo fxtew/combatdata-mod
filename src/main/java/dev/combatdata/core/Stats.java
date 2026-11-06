@@ -82,12 +82,18 @@ public final class Stats {
 
     public static Result compute(Recording r, JumpResetEvaluator.Params p, Filter f, double rangeBlocks, int interpMs,
                                  StatFilter sf, Trades.Params tp) {
+        return compute(r, Rules.single(p, interpMs), f, rangeBlocks, sf, tp);
+    }
+
+    /** rules are built from the whole recording: the filter may drop the segments they come from. */
+    public static Result compute(Recording r, Rules rules, Filter f, double rangeBlocks, StatFilter sf, Trades.Params tp) {
         StatFilter.Applied ap = sf.apply(events(r, f));
         List<Event> ev = ap.kept();
         double[] pings = ev.stream().filter(e -> e instanceof PingEvent).mapToDouble(e -> ((PingEvent) e).pingMs()).toArray();
-        List<JumpResetEvaluator.Attempt> attempts = JumpResetEvaluator.evaluate(ev, p);
-        return new Result(jump(attempts, p), hits(ev, rangeBlocks, MIN_AIM_REACH), combo(ev), opponents(ev), mean(pings),
-                sigma(pings), threeBlock(ev, interpMs), ap.hidden(),
+        List<JumpResetEvaluator.Attempt> attempts = JumpResetEvaluator.evaluate(ev, rules);
+        // excludeHeld comes from the settings and is the same in every part.
+        return new Result(jump(attempts, rules.at(0).jump()), hits(ev, rangeBlocks, MIN_AIM_REACH), combo(ev), opponents(ev),
+                mean(pings), sigma(pings), threeBlock(ev, rules), ap.hidden(),
                 Trades.summary(Trades.split(ev, tp, sf, attempts)), taken(ev));
     }
 
@@ -209,14 +215,16 @@ public final class Stats {
         return new TakenStats(n, mean(ra), max(ra), c, 100.0 * c / n, by);
     }
 
-    private static ThreeBlockStats threeBlock(List<Event> ev, int interpMs) {
+    private static ThreeBlockStats threeBlock(List<Event> ev, Rules rules) {
         int n = 0, c = 0;
         List<Double> d = new ArrayList<>();
         for (Event e : ev) {
-            if (!(e instanceof AttackEvent a) || !ThreeBlockHit.classifiable(a, interpMs)) continue;
+            if (!(e instanceof AttackEvent a)) continue;
+            Rules.Part p = rules.at(a.t());
+            if (!ThreeBlockHit.classifiable(a, p.interpMs())) continue;
             n++;
-            d.add(ThreeBlockHit.opponentDistance(a, interpMs));
-            if (ThreeBlockHit.is(a, interpMs)) c++;
+            d.add(ThreeBlockHit.opponentDistance(a, p.interpMs()));
+            if (ThreeBlockHit.is(a, p.interpMs(), p.oppRange())) c++;
         }
         double[] da = arr(d);
         return new ThreeBlockStats(n, c, n == 0 ? 0 : 100.0 * c / n, mean(da), max(da));
