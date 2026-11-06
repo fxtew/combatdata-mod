@@ -11,6 +11,7 @@ public final class CoreTests {
 
     public static void main(String[] args) throws Exception {
         bufferClock();
+        recordingSwitch();
         bufferTrimAndSnapshot();
         geometry();
         threeBlockHit();
@@ -349,6 +350,45 @@ public final class CoreTests {
         check("продолжение с того же места", c.activeMs(102_000 * MS) == 7000);
         c.reset(102_000 * MS);
         check("сброс на 0:00", c.activeMs(103_000 * MS) == 1000);
+    }
+
+    static void recordingSwitch() throws Exception {
+        BufferTimeline tl = new BufferTimeline(true);
+        check("запись вкл: время буфера идёт", tl.bufferMs(1000) == 1000);
+        check("повторное включение ничего не меняет", !tl.set(true, 1000));
+        check("выключение меняет состояние", tl.set(false, 1000) && !tl.on());
+        check("выключено: часы буфера стоят", tl.bufferMs(5000) == 1000 && tl.bufferMs(9000) == 1000);
+        check("выключено: события не пишутся", tl.map(new PingEvent(5000, 40)) == null);
+        tl.set(true, 9000);
+        check("возобновление с того же времени", tl.bufferMs(9000) == 1000 && tl.bufferMs(10_000) == 2000);
+        Event j = tl.map(new JumpEvent(10_000, 200, true, 9_950));
+        check("событие после паузы в шкале буфера", j.t() == 2000 && ((JumpEvent) j).pressT() == 1950);
+        tl.restart(12_000);
+        check("после сохранения буфер с 0:00", tl.bufferMs(12_500) == 500);
+        tl.set(false, 13_000);
+        tl.restart(14_000);
+        check("сброс при выключенной записи: 0:00 и стоит", tl.bufferMs(18_000) == 0);
+        tl.set(true, 20_000);
+        check("включение после сброса идёт с 0:00", tl.bufferMs(21_000) == 1000);
+
+        RecordingBuffer buf = new RecordingBuffer();
+        BufferTimeline off = new BufferTimeline(false);
+        for (Event e : List.<Event>of(new PingEvent(100, 30), new JumpEvent(200, 4, true, -1))) {
+            Event b = off.map(e);
+            if (b != null) buf.add(b);
+        }
+        check("запись выключена с запуска: буфер пуст", buf.size() == 0 && off.bufferMs(5000) == 0);
+
+        Path dir = Files.createTempDirectory("cdrec");
+        Path f = dir.resolve("combatdata.json");
+        Settings s = new Settings();
+        check("по умолчанию запись включена, серая надпись выключена", s.recordingEnabled && !s.hudShowWhenOff);
+        s.recordingEnabled = false;
+        s.hudShowWhenOff = true;
+        s.save(f);
+        Settings back = Settings.load(f);
+        check("выключенная запись переживает перезапуск", !back.recordingEnabled && back.hudShowWhenOff);
+        check("переключатель записи не считается несохранённой настройкой", new Settings().diffCount(back) == 1);
     }
 
     static void bufferTrimAndSnapshot() {

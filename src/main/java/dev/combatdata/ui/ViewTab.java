@@ -134,7 +134,8 @@ final class ViewTab implements Tab {
         boolean on = Recorder.active();
         int color = on ? 0xFFE5584B : Theme.MUTED;
         String time = "REC " + Fmt.clock(Recorder.shownMs()) + " / " + Fmt.clock(Recorder.capacityMs());
-        String state = on ? (Recorder.full() ? t("перезапись", "overwriting") : t("идёт запись", "recording")) : t("пауза", "paused");
+        String state = on ? (Recorder.full() ? t("перезапись", "overwriting") : t("идёт запись", "recording"))
+                : Recorder.enabled() ? t("пауза", "paused") : t("выключена", "off");
         int room = bx - x - 8, ty = Ui.textY(y, 18);
         String text = ui.font.width(time + " · " + state) + 12 <= room ? time + " · " + state : time;
         if (ui.font.width(text) + 12 > room) return;

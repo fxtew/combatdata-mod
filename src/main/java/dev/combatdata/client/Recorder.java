@@ -28,8 +28,14 @@ public final class Recorder {
     private static final long AUTO_LEAD_MS = 10_000;
     private static final DateTimeFormatter FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
 
+    /** Fight summary looks at most this far back; it reads its own window, so it works with recording off. */
+    private static final long WINDOW_MS = 10 * 60_000L;
+
+    /** Capture time: runs whenever the player is in a world. */
     private static final BufferClock CLOCK = new BufferClock();
+    private static final BufferTimeline TIMELINE = new BufferTimeline(true);
     private static final RecordingBuffer BUFFER = new RecordingBuffer();
+    private static final RecordingBuffer WINDOW = new RecordingBuffer();
     private static final ExecutorService WRITER = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "combatdata-writer");
         t.setDaemon(true);
@@ -54,19 +60,37 @@ public final class Recorder {
     private Recorder() {
     }
 
+    /** Capture time, used for event times; it does not stop when recording is off. */
     public static long now() { return CLOCK.activeMs(System.nanoTime()); }
+
+    /** Buffer time: stands still while recording is off and starts over after a save. */
+    public static long bufferNow() { return TIMELINE.bufferMs(now()); }
 
     public static int tick() { return tick; }
 
-    public static boolean active() { return CLOCK.isRunning(); }
+    /** Events are being written to the buffer. */
+    public static boolean active() { return CLOCK.isRunning() && TIMELINE.on(); }
+
+    public static boolean enabled() { return TIMELINE.on(); }
+
+    /** Hits and jumps are captured: for the buffer, the indicators or the fight summary. */
+    public static boolean capturing() {
+        Settings s = CombatDataClient.settings();
+        return CLOCK.isRunning() && (TIMELINE.on() || s.indicators.enabled || s.fightSummary);
+    }
+
+    private static volatile long toggledWall;
+
+    /** Wall time of the last switch on or off, 0 if none in this session. */
+    public static long toggledWall() { return toggledWall; }
 
     public static int lastPing() { return lastPing; }
 
     public static long capacityMs() { return CombatDataClient.settings().capacityMs(); }
 
-    public static long shownMs() { return Math.min(now(), capacityMs()); }
+    public static long shownMs() { return Math.min(bufferNow(), capacityMs()); }
 
-    public static boolean full() { return now() >= capacityMs(); }
+    public static boolean full() { return bufferNow() >= capacityMs(); }
 
     /** Wall time of the last recording written to disk, 0 if none yet. */
     public static long lastSavedWall() { return lastSavedWall; }
@@ -88,8 +112,44 @@ public final class Recorder {
 
     public static void add(Event e) {
         if (e instanceof AttackEvent || e instanceof IncomingHitEvent) lastCombatMs = Math.max(lastCombatMs, e.t());
-        BUFFER.add(e);
+        if (!(e instanceof PositionEvent)) WINDOW.add(e);
+        Event b = TIMELINE.map(e);
+        if (b != null) BUFFER.add(b);
         EventLog.log(e);
+    }
+
+    /** Applies the state saved in the settings; called once at startup. */
+    public static void init(Settings s) {
+        TIMELINE.set(s.recordingEnabled, now());
+    }
+
+    /**
+     * Turning off pauses the buffer: its clock stands still and nothing new is written, what is there stays.
+     * Hits waiting for confirmation are written as on a disconnect.
+     */
+    public static void setRecording(Minecraft mc, boolean on) {
+        if (on == TIMELINE.on()) return;
+        AttackCapture.flushPending();
+        IncomingCapture.flushPending();
+        long n = now();
+        TIMELINE.set(on, n);
+        InputCapture.reset();
+        toggledWall = System.currentTimeMillis();
+        // A new segment keeps the wall time right after the gap and notes a server change made while off.
+        if (on && connected) add(new SegmentEvent(n, server, dimension, toggledWall));
+        Settings s = CombatDataClient.settings();
+        s.recordingEnabled = on;
+        CombatDataClient.saveSettings();
+        CombatDataClient.LOG.info("[CD] запись {}", on ? "включена" : "выключена");
+        if (!s.hudVisible && mc.player != null) mc.player.sendOverlayMessage(Component.literal(recordingState(on)));
+    }
+
+    public static void toggleRecording(Minecraft mc) {
+        setRecording(mc, !TIMELINE.on());
+    }
+
+    public static String recordingState(boolean on) {
+        return on ? t("Запись включена", "Recording on") : t("Запись выключена", "Recording off");
     }
 
     public static void onTick(Minecraft mc) {
@@ -109,8 +169,9 @@ public final class Recorder {
                 AttackCapture.flushPending();
                 IncomingCapture.clearPending();
                 BUFFER.clear();
+                WINDOW.clear();
                 InputCapture.reset();
-                CLOCK.reset(nowNs);
+                TIMELINE.restart(now());
                 lastPingMs = -PING_INTERVAL_MS;
                 markers = 0;
                 clearCombat();
@@ -122,7 +183,8 @@ public final class Recorder {
                 add(new SegmentEvent(now(), srv, dim, System.currentTimeMillis()));
             }
             long n = now();
-            BUFFER.trim(n, capacityMs());
+            BUFFER.trim(bufferNow(), capacityMs());
+            WINDOW.trim(n, WINDOW_MS);
             if (n - lastPingMs >= PING_INTERVAL_MS) {
                 samplePing(mc, n);
                 lastPingMs = n;
@@ -195,7 +257,7 @@ public final class Recorder {
         IncomingCapture.clearPending();
         BUFFER.clear();
         InputCapture.reset();
-        CLOCK.reset(System.nanoTime());
+        TIMELINE.restart(now());
         lastPingMs = -PING_INTERVAL_MS;
         markers = 0;
         saveQueued = false;
@@ -219,11 +281,12 @@ public final class Recorder {
 
     static void addMarker(Minecraft mc) {
         if (!active()) {
-            chat(mc, t("Запись на паузе, метку поставить нельзя.", "Recording is paused, cannot set a marker."));
+            chat(mc, enabled() ? t("Запись на паузе, метку поставить нельзя.", "Recording is paused, cannot set a marker.")
+                    : t("Запись выключена, метку поставить нельзя.", "Recording is off, cannot set a marker."));
             return;
         }
         add(new MarkerEvent(now(), t("Метка ", "Marker ") + (++markers)));
-        chat(mc, t("Метка ", "Marker ") + markers + t(" поставлена на ", " set at ") + EventLog.formatTime(now()));
+        chat(mc, t("Метка ", "Marker ") + markers + t(" поставлена на ", " set at ") + EventLog.formatTime(bufferNow()));
     }
 
     /** Opened on the next tick: a command runs from the chat screen, which closes right after it. */
@@ -241,6 +304,7 @@ public final class Recorder {
             if (active()) addMarker(mc);
         }
         while (CombatDataClient.INDICATORS.consumeClick()) Indicators.toggle(mc);
+        while (CombatDataClient.RECORD.consumeClick()) toggleRecording(mc);
         boolean open = menuRequested;
         menuRequested = false;
         while (CombatDataClient.MENU.consumeClick()) open = true;
@@ -250,8 +314,13 @@ public final class Recorder {
     public static int bufferSize() { return BUFFER.size(); }
 
     public static Recording liveCopy() {
-        return BUFFER.copy(now(), capacityMs(), playerName, playerUuid, mcVersion(), System.currentTimeMillis())
+        return BUFFER.copy(bufferNow(), capacityMs(), playerName, playerUuid, mcVersion(), System.currentTimeMillis())
                 .withNotRecorded(CombatDataClient.settings().notRecordedMask());
+    }
+
+    /** Recent events in capture time, written whether recording is on or off. */
+    static Recording windowCopy() {
+        return WINDOW.copy(now(), WINDOW_MS, playerName, playerUuid, mcVersion(), System.currentTimeMillis());
     }
 
     public static boolean hasCombatEvents() { return BUFFER.hasCombatEvents(); }
@@ -293,13 +362,13 @@ public final class Recorder {
             }
             return;
         }
-        Recording snap = BUFFER.snapshot(now(), capacityMs(), playerName, playerUuid, mcVersion(), wall)
+        Recording snap = BUFFER.snapshot(bufferNow(), capacityMs(), playerName, playerUuid, mcVersion(), wall)
                 .withNotRecorded(CombatDataClient.settings().notRecordedMask());
         long first = snap.firstCombatMs();
         Recording rec = auto && first > AUTO_LEAD_MS ? snap.trimmedFrom(first - AUTO_LEAD_MS) : snap;
         BUFFER.clear();
         InputCapture.reset();
-        CLOCK.reset(System.nanoTime());
+        TIMELINE.restart(now());
         lastPingMs = -PING_INTERVAL_MS;
         markers = 0;
         if (auto) {
@@ -368,7 +437,7 @@ public final class Recorder {
         PlayerInfo info = mc.getConnection().getPlayerInfo(mc.player.getUUID());
         if (info != null && info.getLatency() > 0) {
             lastPing = info.getLatency();
-            BUFFER.add(new PingEvent(n, lastPing));
+            add(new PingEvent(n, lastPing));
         }
     }
 

@@ -149,6 +149,9 @@ final class IndicatorsTab implements Tab {
         if (!dotOnly) y = flagAt(ui, x, y, w, indent, t("Тень у текста", "Text shadow"), null, l.hudShadow, v -> l.hudShadow = v);
         y = flagAt(ui, x, y, w, indent, t("Скрывать на паузе", "Hide when paused"), t("Вне мира и в паузе одиночной игры", "Outside a world and in singleplayer pause"),
                 l.hudHideWhenPaused, v -> l.hudHideWhenPaused = v);
+        y = flagAt(ui, x, y, w, indent, t("Показывать, когда запись выключена", "Show when recording is off"),
+                t("Серая надпись REC со значком паузы", "Grey REC label with a pause sign"),
+                l.hudShowWhenOff, v -> l.hudShowWhenOff = v);
         return placeAt(ui, x, y, w, indent, t("Положение", "Position"), () -> Minecraft.getInstance().gui.setScreen(new HudPositionScreen(menu)));
     }
 

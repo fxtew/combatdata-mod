@@ -12,8 +12,14 @@ public final class RecHud {
     static final int H = 13, PAD = 4, DOT = 7, GAP = 5;
     static final int RED = 0xFFE5584B, GREEN = 0xFF7FB285, GREY = 0xFFA8A69D, WHITE = 0xFFF4F2EA;
 
-    record Label(String text, int state, boolean blink, boolean paused) {
+    /** off: recording switched off, drawn with a pause sign; hidden: not drawn in game, only in previews. */
+    record Label(String text, int state, boolean blink, boolean paused, boolean off, boolean hidden) {
+        Label(String text, int state, boolean blink, boolean paused) {
+            this(text, state, blink, paused, false, false);
+        }
     }
+
+    static final long OFF_NOTICE_MS = 2000;
 
     record Box(int x, int y, int w, int h, int rawW, float scale) {
         boolean contains(double mx, double my) {
@@ -29,7 +35,7 @@ public final class RecHud {
         Settings s = CombatDataClient.settings();
         if (!s.hudVisible || mc.gui.hud.isHidden() || mc.player == null || mc.gui.screen() instanceof HudPositionScreen) return;
         Label l = label(s);
-        if (s.hudHideWhenPaused && l.paused()) return;
+        if (l.hidden() || s.hudHideWhenPaused && l.paused()) return;
         draw(g, mc.font, box(mc.font, g.guiWidth(), g.guiHeight(), s, l), l, false, s);
     }
 
@@ -48,6 +54,12 @@ public final class RecHud {
         long saved = Recorder.lastSavedWall(), sinceSave = System.currentTimeMillis() - saved;
         if (saved > 0 && sinceSave < 2500) return new Label(Recorder.lastSavedAuto() ? t("Бой сохранён", "Fight saved")
                 : t("Сохранено", "Saved"), GREEN, false, false);
+        if (!Recorder.enabled()) {
+            long toggled = Recorder.toggledWall();
+            if (toggled > 0 && System.currentTimeMillis() - toggled < OFF_NOTICE_MS)
+                return new Label(Recorder.recordingState(false), GREY, false, false);
+            return new Label("REC", GREY, false, true, true, !s.hudShowWhenOff);
+        }
         String now = Recorder.clock(Recorder.shownMs()), cap = Recorder.clock(Recorder.capacityMs());
         boolean time = s.hudFormat == Settings.HUD_TIME;
         if (!Recorder.active()) return new Label("REC " + now + t(" пауза", " paused"), GREY, false, true);
@@ -63,10 +75,15 @@ public final class RecHud {
         return s.hudFormat != Settings.HUD_DOT;
     }
 
+    /** The pause sign of a switched-off label is drawn even when the dot is turned off: "REC" alone looks like recording. */
+    private static boolean showIcon(Settings s, Label l) {
+        return showDot(s) || l.off();
+    }
+
     static int rawWidth(Font font, Settings s, Label l) {
         int w = PAD + PAD;
-        if (showDot(s)) w += DOT;
-        if (showText(s)) w += font.width(l.text()) + (showDot(s) ? GAP : 0);
+        if (showIcon(s, l)) w += DOT;
+        if (showText(s)) w += font.width(l.text()) + (showIcon(s, l) ? GAP : 0);
         return w;
     }
 
@@ -87,7 +104,12 @@ public final class RecHud {
         int alpha = Math.round(s.hudBgOpacity * 255 / 100f);
         if (alpha > 0) roundRect(g, 0, 0, w, H, alpha << 24);
         int tx = PAD;
-        if (showDot(s)) {
+        if (l.off()) {
+            int top = (H - DOT) / 2;
+            g.fill(PAD + 1, top, PAD + 3, top + DOT, l.state());
+            g.fill(PAD + 4, top, PAD + 6, top + DOT, l.state());
+            tx += DOT + GAP;
+        } else if (showDot(s)) {
             boolean on = !l.blink() || !s.hudBlink || (System.currentTimeMillis() / 600) % 2 == 0;
             circle(g, PAD, (H - DOT) / 2, DOT, on ? l.state() : (l.state() & 0x00FFFFFF) | 0x55000000);
             tx += DOT + GAP;

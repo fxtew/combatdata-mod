@@ -74,7 +74,7 @@ public final class IncomingCapture {
 
     /** HEAD of LivingEntity.handleDamageEvent for the local player. */
     public static void onLocalDamaged(LocalPlayer p, DamageSource source) {
-        if (!Recorder.active()) return;
+        if (!Recorder.capturing()) return;
         Entity cause = source.getEntity();
         if (!(cause instanceof Player attacker) || attacker == p) return;
         long n = Recorder.now();
@@ -114,7 +114,7 @@ public final class IncomingCapture {
 
     /** HEAD of LivingEntity.jumpFromGround for the local player. */
     public static void onLocalJump(LocalPlayer p) {
-        if (!Recorder.active()) return;
+        if (!Recorder.capturing()) return;
         var o = Minecraft.getInstance().options;
         int keys = JumpEvent.keys(o.keyUp.isDown(), o.keyDown.isDown(), o.keyLeft.isDown(), o.keyRight.isDown(),
                 o.keySprint.isDown() || p.isSprinting());
